@@ -1,0 +1,93 @@
+{% extends "cpall/base.html" %}
+{% block title %}แผนทั้งหมด — แพลนผลิต 7-11{% endblock %}
+{% block nav_plan %}active{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-5">
+    <h1 class="text-xl font-semibold text-stone-900">แผนที่เคยสร้าง</h1>
+    <a href="{% url 'cpall:po_list' %}" class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3.5 py-2 text-sm font-medium text-white hover:bg-emerald-800 transition shrink-0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        สร้างแผนใหม่
+    </a>
+</div>
+
+<div class="mb-4 flex flex-wrap items-center gap-3">
+    <div class="flex gap-1.5">
+        <a href="?status=all&page_size={{ page_size }}" class="px-3 py-1.5 text-xs font-medium rounded-lg border transition {% if status == 'all' %}bg-stone-800 text-white border-stone-800{% else %}bg-white text-stone-600 border-stone-200 hover:border-stone-300{% endif %}">ทั้งหมด</a>
+        <a href="?status=success&page_size={{ page_size }}" class="px-3 py-1.5 text-xs font-medium rounded-lg border transition {% if status == 'success' %}bg-emerald-700 text-white border-emerald-700{% else %}bg-white text-stone-600 border-stone-200 hover:border-stone-300{% endif %}">สำเร็จ</a>
+        <a href="?status=failed&page_size={{ page_size }}" class="px-3 py-1.5 text-xs font-medium rounded-lg border transition {% if status == 'failed' %}bg-red-600 text-white border-red-600{% else %}bg-white text-stone-600 border-stone-200 hover:border-stone-300{% endif %}">ล้มเหลว</a>
+    </div>
+
+    <form method="get" class="flex items-center gap-2">
+        <input type="hidden" name="status" value="{{ status }}">
+        <input type="hidden" name="page_size" value="{{ page_size }}">
+        <label class="text-xs text-stone-500">สร้างระหว่าง</label>
+        <input type="date" name="date_from" value="{{ date_from }}"
+               class="rounded-md border border-stone-300 px-2 py-1 text-xs">
+        <span class="text-stone-400 text-xs">ถึง</span>
+        <input type="date" name="date_to" value="{{ date_to }}"
+               class="rounded-md border border-stone-300 px-2 py-1 text-xs">
+        <button type="submit" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-stone-300 bg-white text-stone-600 hover:border-stone-400 transition">
+            กรอง
+        </button>
+        {% if date_from or date_to %}
+        <a href="?status={{ status }}&page_size={{ page_size }}" class="text-xs text-stone-400 hover:text-stone-600 hover:underline">ล้าง</a>
+        {% endif %}
+    </form>
+</div>
+
+{% if plan_runs %}
+<div class="card overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-stone-200 bg-stone-50 text-left text-stone-500">
+                <th class="px-4 py-2.5">#</th>
+                <th class="px-4 py-2.5">สร้างเมื่อ</th>
+                <th class="px-4 py-2.5">สถานะ</th>
+                <th class="px-4 py-2.5"></th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-stone-100">
+            {% for run in plan_runs %}
+            <tr class="card-row transition">
+                <td class="px-4 py-2.5 mono text-stone-400">{{ run.id }}</td>
+                <td class="px-4 py-2.5 text-stone-600">{{ run.created_at|date:"d/m/Y H:i" }}</td>
+                <td class="px-4 py-2.5">
+                    {% if run.production_plan_status == 'success' %}
+                    <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">สำเร็จ</span>
+                    {% else %}
+                    <span class="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700">ล้มเหลว</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-2.5 text-right">
+                    <a href="{% url 'cpall:view_plan' run.id %}" class="text-emerald-700 hover:underline font-medium">ดูแผน</a>
+                    <form hx-post="{% url 'cpall:delete_plan_run' run.id %}" class="inline"
+                          hx-confirm="ลบแผนนี้ถาวรเลยไหม? (จะลบไฟล์ Excel ของแผนนี้ทั้งหมดด้วย)"
+                          hx-target="closest tr" hx-swap="outerHTML swap:200ms">
+                        {% csrf_token %}
+                        <button type="submit" class="text-stone-400 hover:text-red-600 transition ml-3 align-middle" title="ลบ">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 inline"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% include "cpall/_pagination.html" with base_qs=base_qs %}
+
+{% else %}
+<div class="rounded-xl border border-dashed border-stone-300 bg-white px-6 py-16 text-center">
+    {% if status != 'all' or date_from or date_to %}
+    <p class="text-stone-500">ไม่พบแผนที่ตรงกับตัวกรองที่เลือก</p>
+    <a href="{% url 'cpall:plan_list' %}" class="text-sm text-emerald-700 hover:underline mt-1 inline-block">ล้างตัวกรองทั้งหมด</a>
+    {% else %}
+    <p class="text-stone-500">ยังไม่เคยสร้างแผน</p>
+    <a href="{% url 'cpall:po_list' %}" class="text-sm text-emerald-700 hover:underline mt-1 inline-block">ไปเลือก PO เพื่อสร้างแผน</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "cpall/base.html" %}
+{% block nav_template %}active{% endblock %}
+{% block title %}ประวัติเวอร์ชัน {{ label }} — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <a href="{% url 'cpall:template_list' %}" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับหน้าจัดการ Template</a>
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">ประวัติเวอร์ชัน — {{ label }}</h1>
+    <p class="text-sm text-stone-500 mt-1">เก็บทุกเวอร์ชันที่เคยอัปโหลดไว้ถาวร ย้อนกลับไปเวอร์ชันไหนก็ได้</p>
+</div>
+
+{% include "cpall/_template_version_list.html" %}
+
+{% endblock %}

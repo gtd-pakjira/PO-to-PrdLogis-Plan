@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+
+# Django
+db.sqlite3
+*.log
+
+# Environment / secrets — ห้าม commit เด็ดขาด (ดู .env.example สำหรับ template)
+.env
+
+# ข้อมูลจริงของลูกค้า (ไฟล์ PO ที่อัปโหลด, Excel ที่สร้างออกมา) — ไม่ใช่โค้ด ไม่ควรอยู่ใน git เก็บแค่
+# โฟลเดอร์ไว้ (.gitkeep) ตัวไฟล์จริงเก็บแยกนอก git
+cpall/data/po_uploads/*
+!cpall/data/po_uploads/.gitkeep
+cpall/data/output/*
+!cpall/data/output/.gitkeep
+cpall/excel_templates/backups/
+
+# Editor / OS
+.DS_Store
+.vscode/settings.json
+*.swp
+
+# Virtual env (เผื่อมีใครสร้างไว้ตอนรันนอก devcontainer)
+venv/
+.venv/

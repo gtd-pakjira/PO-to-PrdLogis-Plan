@@ -1,0 +1,9 @@
+{% extends "cpall/base.html" %}
+{% block nav_plan %}active{% endblock %}
+{% block title %}ไม่พบแผน — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+<div class="rounded-lg border border-dashed border-stone-300 bg-white px-6 py-16 text-center max-w-lg">
+    <p class="text-stone-500">ไม่พบแผน #{{ plan_run_id }}</p>
+    <a href="javascript:history.back()" class="text-sm text-emerald-700 hover:underline mt-1 inline-block">กลับ</a>
+</div>
+{% endblock %}

@@ -1,0 +1,86 @@
+# location_mapping.yaml
+# ตาราง map รหัสสถานที่ส่ง (Delivery Location Number จาก PO) -> กลุ่มพื้นที่ (Logistic Plan group)
+#
+# กลุ่มพื้นที่ (group) มี 3 ค่าที่เป็นไปได้ตอนนี้ (POC เน้น "group" สำหรับ Production Plan
+# ยังไม่ต้องใช้ sub_location/delivery_time จนกว่าจะทำ Logistic Plan ใน Phase 1b):
+#   - บางบัวทอง   (รวม รอบเช้าต่างจังหวัด เข้าไปด้วยตามที่ตกลงไว้ - ยังเป็นสมมติฐาน ปรับได้)
+#   - มหาชัย
+#   - สุวรรณภูมิ
+#
+# ที่มา: สกัดจาก cpall_po_export_20260825.xlsx (คอลัมน์ Delivery Location Number / Delivery Location)
+# วันที่สกัด: 2026-08-26
+# อัปเดต 2026-08-28: แยก "รอบเช้าต่างจังหวัด" ออกเป็นกลุ่มของตัวเอง (เดิมเคยเดาไว้ว่าน่าจะรวมกับ
+# บางบัวทอง แต่เช็คกับไฟล์เทมเพลตจริง (บางบัวทอง.xlsx) แล้วพบว่าไม่มีคอลัมน์รองรับ 5 จุดนี้เลย —
+# ยังไม่มี Logistic Plan template สำหรับกลุ่มนี้ เก็บพักไว้ก่อน รอ Template จริงจากทางบริษัท
+
+locations:
+  - fc_code: "FC01"
+    name_th: "ศูนย์กระจายสินค้า CDC1 (บางบัวทอง)"
+    group: "บางบัวทอง"
+    sub_location: "บางบัวทอง"
+
+  - fc_code: "FC12"
+    name_th: "คลัง CDC ชลบุรี ( คลังดี )"
+    group: "บางบัวทอง"
+    sub_location: "ชลบุรี"
+
+  - fc_code: "FC15"
+    name_th: "คลัง CDC นครสวรรค์ ( คลังดี )"
+    group: "บางบัวทอง"
+    sub_location: "นครสวรรค์"
+
+  - fc_code: "FC03"
+    name_th: "คลัง CDC นครราชสีมา_คลังดี"
+    group: "บางบัวทอง"
+    sub_location: "นครราชสีมา"
+
+  - fc_code: "FC06"
+    name_th: "คลัง CDC มหาชัย คลังดี"
+    group: "มหาชัย"
+    sub_location: "มหาชัย"
+
+  - fc_code: "FC08"
+    name_th: "ศูนย์กระจายสินค้า CDC2 (สุวรรณภูมิ)"
+    group: "สุวรรณภูมิ"
+    sub_location: "สุวรรณภูมิ"
+
+  # --- กลุ่ม "รอบเช้าต่างจังหวัด" — แยกเป็นกลุ่มของตัวเอง ไม่ใช่ส่วนหนึ่งของบางบัวทอง
+  # (แก้ไขจากที่เคยตั้งสมมติฐานผิดว่าน่าจะรวมกับบางบัวทอง — ทดสอบกับไฟล์เทมเพลตจริงแล้วพบว่า
+  # บางบัวทอง.xlsx ไม่มีคอลัมน์รองรับ 5 จุดนี้เลย จึงต้องแยกกลุ่ม)
+  # สถานะ: ยังไม่มีไฟล์เทมเพลต Logistic Plan สำหรับกลุ่มนี้ — Production Plan (แพลน 7-11.xlsx)
+  # ยังคำนวณให้ได้ปกติ (มีคอลัมน์ครบทั้ง 11 จุดอยู่แล้ว) แต่ Logistic Plan ของกลุ่มนี้ต้องรอ
+  # เทมเพลตจริงจาก Admin ก่อนถึงจะทำได้
+  - fc_code: "FC02"
+    name_th: "CDC ขอนแก่น"
+    group: "รอบเช้าต่างจังหวัด"
+    sub_location: "ขอนแก่น"
+
+  - fc_code: "FC32"
+    name_th: "คลัง CDC สุราษฎร์ธานี"
+    group: "รอบเช้าต่างจังหวัด"
+    sub_location: "สุราษฎร์ธานี"
+
+  - fc_code: "FC11"
+    name_th: "คลัง CDC เชียงใหม่"
+    group: "รอบเช้าต่างจังหวัด"
+    sub_location: "เชียงใหม่"
+
+  - fc_code: "FC07"
+    name_th: "คลัง CDC ภูเก็ต คลังดี"
+    group: "รอบเช้าต่างจังหวัด"
+    sub_location: "ภูเก็ต"
+
+  - fc_code: "FC33"
+    name_th: "คลัง CDC หาดใหญ่"
+    group: "รอบเช้าต่างจังหวัด"
+    sub_location: "หาดใหญ่"
+
+  - fc_code: "FC77"
+    name_th: "คลังทดสอบ resolve"
+    group: "มหาชัย"
+    sub_location: "คลังทดสอบ resolve"
+
+  - fc_code: "FC66"
+    name_th: "คลังทดสอบ fallback"
+    group: "มหาชัย"
+    sub_location: "คลังทดสอบ fallback"

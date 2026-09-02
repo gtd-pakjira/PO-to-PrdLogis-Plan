@@ -1,0 +1,224 @@
+"""
+po_parser.py — Module 1: PO Parser + Loader
+
+อ่านไฟล์ PO Export (.xlsx) รูปแบบเดียวกับ cpall_po_export_20260825.xlsx
+ตรวจสอบว่ามีคอลัมน์ที่จำเป็นครบ แล้วบันทึกลง Postgres (po_import + po_line)
+
+*** Phase 1 (ORM migration) *** ฟังก์ชัน CRUD ทั้งหมดในไฟล์นี้ย้ายมาใช้ Django ORM แล้ว (เดิมเป็น
+raw SQL) — parse_po_file() ไม่เปลี่ยน (ยังใช้ pandas อ่าน Excel เหมือนเดิม ไม่เกี่ยวกับ DB) ข้อดีที่ได้
+เพิ่มมาโดยไม่ได้ตั้งใจ: load_po_to_db() เดิม INSERT ทีละแถว (300+ ครั้งต่อไฟล์) ตอนนี้ใช้
+PoLine.objects.bulk_create() แทน เร็วขึ้นจริงเพราะยิง query เดียวหลายแถวแทนที่จะยิงทีละแถว
+"""
+import os
+from datetime import datetime
+
+import pandas as pd
+
+from customers.cpall.logic.db import get_cpall_customer_id
+from customers.cpall.models import LocationMapping, PlanRunImport, PoImport, PoLine
+
+# คอลัมน์ที่ต้องมีใน PO Export — ถ้าไม่ครบ ให้หยุดทันที (ตาม FR-1 / UC-1 exception)
+REQUIRED_COLUMNS = [
+    "Purchase Order Number",
+    "Purchase Order Date",
+    "Delivery Date",
+    "Delivery Time",
+    "Delivery Location Number",
+    "Delivery Location",
+    "Line Item Number",
+    "Item Number (Product Code)",
+    "Item Name ",          # หมายเหตุ: ไฟล์ต้นฉบับมีช่องว่างท้ายชื่อคอลัมน์นี้จริง
+    "Ordered Quantity",
+    "Unit Type ",          # เช่นกัน มีช่องว่างท้าย
+    "Net Case Price",
+]
+
+
+class POParseError(Exception):
+    pass
+
+
+class POInUseError(Exception):
+    """ลบไม่ได้เพราะ po_import นี้ถูกใช้สร้างแผนไปแล้ว"""
+    pass
+
+
+def _to_date(value):
+    """แปลงวันที่รูปแบบ 'DD/MM/YYYY' (ปี พ.ศ. หรือ ค.ศ. ตามที่ระบบลูกค้าส่งมา) เป็น datetime.date"""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    s = str(value).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None  # ไม่ parse ได้ -> เก็บเป็น NULL ดีกว่าทำให้ทั้งแถวพัง
+
+
+def parse_po_file(filepath: str) -> pd.DataFrame:
+    """อ่านไฟล์ PO Export คืนค่าเป็น DataFrame ที่ normalize คอลัมน์แล้ว"""
+    df = pd.read_excel(filepath, sheet_name=0, dtype=object)
+
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise POParseError(
+            f"ไฟล์ PO ขาดคอลัมน์ที่จำเป็น: {missing}\n"
+            f"คอลัมน์ที่พบในไฟล์: {list(df.columns)}"
+        )
+
+    out = pd.DataFrame()
+    out["po_number"] = df["Purchase Order Number"].astype(str).str.strip()
+    out["po_date"] = df["Purchase Order Date"].apply(_to_date)
+    out["delivery_date"] = df["Delivery Date"].apply(_to_date)
+    out["delivery_time"] = df["Delivery Time"].astype(str)
+    out["fc_code"] = df["Delivery Location Number"].astype(str).str.strip()
+    out["delivery_location"] = df["Delivery Location"]
+    out["line_no"] = pd.to_numeric(df["Line Item Number"], errors="coerce")
+    out["barcode"] = df["Item Number (Product Code)"].astype(str).str.strip()
+    out["item_name"] = df["Item Name "]
+    out["qty_ordered"] = pd.to_numeric(df["Ordered Quantity"], errors="coerce")
+    out["unit_type"] = df["Unit Type "]
+    out["net_case_price"] = pd.to_numeric(df["Net Case Price"], errors="coerce")
+
+    # แถวที่ไม่มี PO number หรือ barcode คือแถวว่าง/สรุปท้ายไฟล์ -> ตัดทิ้ง
+    out = out.dropna(subset=["po_number", "barcode"])
+    out = out[out["po_number"].str.strip() != ""]
+
+    # เช็คแถวที่ซ้ำกันเป๊ะภายในไฟล์เดียวกัน (PO เดียวกัน + จุดส่งเดียวกัน + SKU เดียวกัน + line_no
+    # เดียวกัน) — เจอได้บางครั้งจากไฟล์ export ต้นทางเอง ไม่ใช่ความผิดของเรา แต่ถ้าไม่กรองออกจะทำให้
+    # ยอดสั่งเพี้ยน (นับซ้ำ) — ตัดแถวซ้ำออก เก็บแถวแรกที่เจอไว้ แล้วแจ้งจำนวนที่ตัดออกให้เห็นชัดเจน
+    dup_key_cols = ["po_number", "fc_code", "barcode", "line_no"]
+    dup_mask = out.duplicated(subset=dup_key_cols, keep="first")
+    n_dup = int(dup_mask.sum())
+    if n_dup > 0:
+        print(f"[po_parser] ⚠️  พบแถวข้อมูลซ้ำกันเป๊ะ {n_dup} แถว (PO+จุดส่ง+SKU+ลำดับเดียวกัน) — ตัดออกอัตโนมัติ")
+        out = out[~dup_mask]
+
+    # เตือน (ไม่ raise) ถ้า unit_type ไม่ใช่ CT ตามที่ระบุไว้ใน Data Model (ข้อ 2.4)
+    non_ct = out[~out["unit_type"].isin(["CT"])]
+    if len(non_ct) > 0:
+        print(f"[po_parser] ⚠️  พบ {len(non_ct)} แถวที่ Unit Type ไม่ใช่ 'CT' — ควรตรวจสอบ")
+
+    return out
+
+
+def load_po_to_db(filepath: str, production_date, po_date, imported_by: str = "admin") -> int:
+    """
+    parse ไฟล์ PO แล้วบันทึกลง Postgres คืนค่า po_import_id ที่สร้างขึ้น
+    production_date, po_date: datetime.date — วันที่ผลิต / วันที่ PO ของรอบนี้ (ผูกกับรอบนี้ตั้งแต่ตอน
+    import เพราะ Production Plan รวมหลายรอบเข้าไฟล์เดียว แต่ละรอบอาจมีวันที่ต่างกัน — เช่น รอบบ่ายผลิต
+    วันนี้ส่งพรุ่งนี้ แต่รอบเช้าต่างจังหวัดของวันถัดมาอาจวันที่ต่างออกไป)
+    """
+    df = parse_po_file(filepath)
+    customer_id = get_cpall_customer_id()
+
+    po_import = PoImport.objects.create(
+        customer_id=customer_id, source_filename=filepath, imported_by=imported_by,
+        production_date=production_date, po_date=po_date, total_rows=len(df), status="imported",
+    )
+
+    lines = []
+    for _, row in df.iterrows():
+        qty = float(row["qty_ordered"]) if pd.notna(row["qty_ordered"]) else None
+        price = float(row["net_case_price"]) if pd.notna(row["net_case_price"]) else None
+        lines.append(PoLine(
+            po_import=po_import,
+            po_number=row["po_number"],
+            po_date=row["po_date"],
+            delivery_date=row["delivery_date"],
+            delivery_time=row["delivery_time"],
+            fc_code=row["fc_code"],
+            delivery_location=row["delivery_location"],
+            line_no=int(row["line_no"]) if pd.notna(row["line_no"]) else None,
+            barcode=row["barcode"],
+            item_name=row["item_name"],
+            qty_ordered=qty,
+            unit_type=row["unit_type"],
+            net_case_price=price,
+            total_amount=(qty * price) if qty is not None and price is not None else None,
+        ))
+    PoLine.objects.bulk_create(lines)
+
+    print(f"[po_parser] imported {len(df)} lines from {filepath} -> po_import_id={po_import.id}")
+    return po_import.id
+
+
+def delete_po_import(po_import_id: int):
+    """
+    ลบ PO ที่ import ไว้ (แถว po_line + po_import + ไฟล์ที่อัปโหลดไว้บนดิสก์)
+    ถ้าเคยถูกใช้สร้างแผนไปแล้ว (มีอยู่ใน plan_run_import) จะ raise POInUseError ทันที ไม่ลบอะไรเลย
+    — ต้องไปลบแผนที่ใช้ PO นี้ก่อน ถึงจะลบ PO ได้ (กันข้อมูลอ้างอิงพัง/แผนเก่าหาไฟล์ต้นทางไม่เจอ)
+    """
+    used_count = PlanRunImport.objects.filter(po_import_id=po_import_id).count()
+    if used_count > 0:
+        raise POInUseError(
+            f"PO นี้ถูกใช้สร้างแผนไปแล้ว {used_count} แผน — ลบแผนที่ใช้ PO นี้ก่อน ถึงจะลบ PO นี้ได้"
+        )
+
+    try:
+        po_import = PoImport.objects.get(id=po_import_id)
+    except PoImport.DoesNotExist:
+        return
+
+    source_filename = po_import.source_filename
+    po_import.delete()  # PoLine ตั้ง on_delete=CASCADE ไว้แล้ว ลบตามอัตโนมัติ ไม่ต้อง DELETE แยก
+
+    if source_filename and os.path.exists(source_filename):
+        os.remove(source_filename)
+
+
+def list_po_imports_paginated(page: int = 1, page_size: int = 10, search: str = "") -> dict:
+    """
+    ดึงรายการ PO แบบแบ่งหน้า + ค้นหาได้ — ใช้ที่หน้า "PO ทั้งหมด" (ต่างจาก list_po_imports() เดิม
+    ที่ใช้แค่โชว์ตัวอย่างสั้นๆ ในแดชบอร์ด) ค้นหา/แบ่งหน้าที่ระดับ SQL ตรงๆ ผ่าน ORM (ไม่ใช่ดึงมาทั้งหมด
+    แล้วตัดทีหลัง) — รองรับข้อมูลเยอะในอนาคตได้โดยไม่ช้าลง
+    -> {"items": [...], "total": N, "page": ..., "page_size": ..., "total_pages": ...}
+    """
+    page = max(1, page)
+    page_size = page_size if page_size in (10, 50, 100) else 10
+    offset = (page - 1) * page_size
+
+    qs = PoImport.objects.all()
+    if search:
+        qs = qs.filter(source_filename__icontains=search)
+
+    total = qs.count()
+    rows = qs.order_by("-imported_at")[offset:offset + page_size]
+
+    items = [
+        {"id": r.id, "source_filename": r.source_filename, "production_date": r.production_date,
+         "po_date": r.po_date, "total_rows": r.total_rows,
+         "imported_at": r.imported_at, "imported_by": r.imported_by}
+        for r in rows
+    ]
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
+
+
+def list_po_imports(limit: int = 50) -> list[dict]:
+    """
+    ดึงรายการ PO ที่เคย import ไว้ทั้งหมด เรียงล่าสุดก่อน — ใช้แสดงในหน้า Dashboard
+    -> [{"id":, "source_filename":, "production_date":, "po_date":, "total_rows":, "imported_at":, "imported_by":}, ...]
+    """
+    rows = PoImport.objects.order_by("-imported_at")[:limit]
+    return [
+        {"id": r.id, "source_filename": r.source_filename, "production_date": r.production_date,
+         "po_date": r.po_date, "total_rows": r.total_rows,
+         "imported_at": r.imported_at, "imported_by": r.imported_by}
+        for r in rows
+    ]
+
+
+def check_unknown_locations(po_import_id: int) -> list:
+    """UC-2: หา fc_code ในรอบนี้ที่ยังไม่มีใน location_mapping"""
+    known_fc_codes = LocationMapping.objects.values_list("fc_code", flat=True)
+    rows = (
+        PoLine.objects.filter(po_import_id=po_import_id)
+        .exclude(fc_code__in=known_fc_codes)
+        .values_list("fc_code", "delivery_location")
+        .distinct()
+    )
+    return list(rows)

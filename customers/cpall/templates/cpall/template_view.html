@@ -1,0 +1,58 @@
+{% extends "cpall/base.html" %}
+{% block title %}ดูไฟล์ {{ grid.label }} — แพลนผลิต 7-11{% endblock %}
+{% block nav_template %}active{% endblock %}
+{% block content %}
+
+<div class="mb-5">
+    <a href="{% url 'cpall:template_list' %}" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับหน้าจัดการ Template</a>
+    <div class="flex items-center justify-between mt-1">
+        <h1 class="text-xl font-semibold text-stone-900">{{ grid.label }}</h1>
+        <a href="{% url 'cpall:template_download' key %}"
+           class="text-sm text-emerald-700 hover:underline font-medium">ดาวน์โหลด Excel</a>
+    </div>
+    <p class="text-xs text-stone-400 mt-1">โหมดดูอย่างเดียว — เห็นสูตรจริงในไฟล์ (ไม่ใช่ค่าที่คำนวณแล้ว) แก้ไขไม่ได้ตรงนี้</p>
+</div>
+
+{% if grid.sheet_names|length > 1 %}
+<div class="mb-4 flex flex-wrap gap-1.5">
+    {% for sheet in grid.sheet_names %}
+    <a href="?sheet={{ sheet|urlencode }}"
+       class="px-3 py-1.5 text-xs font-medium rounded-lg border transition
+              {% if sheet == grid.current_sheet %}bg-emerald-700 text-white border-emerald-700{% else %}bg-white text-stone-600 border-stone-200 hover:border-stone-300{% endif %}">
+        {{ sheet }}
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if grid.truncated %}
+<p class="mb-3 text-xs text-amber-600">ไฟล์นี้มีข้อมูลมากกว่าที่แสดง — โชว์แค่บางส่วน (ดาวน์โหลดไปดูเต็มๆ ได้)</p>
+{% endif %}
+
+<div class="card overflow-auto" style="max-height: 78vh;">
+    <table class="text-xs border-separate" style="border-spacing: 0;">
+        <thead>
+            <tr>
+                <th class="sticky left-0 top-0 z-20 bg-stone-100 border-b border-r border-stone-200 px-2 py-1 w-10 text-stone-400 font-normal"></th>
+                {% for letter in grid.col_letters %}
+                <th class="sticky top-0 z-10 bg-stone-100 border-b border-stone-200 px-2 py-1 text-stone-500 font-normal text-center min-w-[90px]">{{ letter }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in grid.rows %}
+            <tr>
+                <td class="sticky left-0 z-[5] bg-stone-100 border-r border-stone-200 px-2 py-1 text-center text-stone-400">{{ row.row_num }}</td>
+                {% for cell in row.cells %}
+                <td class="border-b border-r border-stone-100 px-2 py-1 whitespace-nowrap
+                           {% if cell.is_formula %}mono text-emerald-700 bg-emerald-50/40{% endif %}">
+                    {{ cell.value|default:"" }}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

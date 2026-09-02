@@ -1,0 +1,18 @@
+{
+  "name": "แพลนผลิต 7-11 (Python + Postgres + pgAdmin)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [5432, 5050, 8000],
+  "portsAttributes": {
+    "5432": { "label": "PostgreSQL (DB)" },
+    "5050": { "label": "pgAdmin (เปิดในเบราว์เซอร์เพื่อดูข้อมูล)" },
+    "8000": { "label": "Django dev server" }
+  },
+  "postCreateCommand": "bash .devcontainer/postCreate.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+Django==6.1
+django-environ==0.11.2
+django-crispy-forms==2.7
+crispy-tailwind==1.0.3
+django-admin-kubi==1.1.1
+psycopg2-binary==2.9.9
+PyYAML==6.0.2
+pandas==2.2.3
+openpyxl==3.1.5

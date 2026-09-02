@@ -1,0 +1,59 @@
+{% extends "cpall/base.html" %}
+{% block nav_template %}active{% endblock %}
+{% block title %}จัดการ Template — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <a href="{% url 'cpall:index' %}" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับหน้าแรก</a>
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">จัดการ Template</h1>
+    <p class="text-sm text-stone-500 mt-1">
+        ดาวน์โหลดไปแก้ไข (เพิ่มคอลัมน์ PO, เพิ่มแถว SKU, กรอกยอดเผื่อ ฯลฯ) แล้วอัปโหลดกลับเข้ามาแทนที่ได้เลย
+        — ระบบจะตรวจโครงสร้างไฟล์ก่อนเสมอ ถ้าผิดจะไม่ยอมให้แทนที่ และเก็บทุกเวอร์ชันไว้ถาวร ย้อนกลับไปเวอร์ชันไหนก็ได้
+    </p>
+</div>
+
+<div class="grid gap-3 max-w-2xl">
+    {% for t in templates %}
+    <div class="bg-white rounded-lg border border-stone-200 px-4 py-4">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <p class="text-sm font-medium text-stone-900">{{ t.label }}</p>
+                {% if t.exists %}
+                <p class="text-xs text-stone-400 mt-0.5">
+                    เวอร์ชัน {{ t.active_version }} จากทั้งหมด {{ t.total_versions }}
+                    &middot; ใช้ตั้งแต่ {{ t.uploaded_at|date:"d/m/Y H:i" }}
+                </p>
+                {% else %}
+                <p class="text-xs text-red-500 mt-0.5">ไม่พบไฟล์นี้ในระบบ</p>
+                {% endif %}
+            </div>
+            {% if t.exists %}
+            <div class="flex items-center gap-3 shrink-0">
+                <a href="{% url 'cpall:template_versions' t.key %}"
+                   class="text-sm text-stone-600 hover:text-stone-900 font-medium">ประวัติเวอร์ชัน</a>
+                <a href="{% url 'cpall:template_view' t.key %}"
+                   class="text-sm text-stone-600 hover:text-stone-900 font-medium">ดูสูตร</a>
+                <a href="{% url 'cpall:template_download' t.key %}"
+                   class="text-sm text-emerald-700 hover:underline font-medium">ดาวน์โหลด</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <form hx-post="{% url 'cpall:template_upload' t.key %}" hx-encoding="multipart/form-data"
+              class="flex items-center gap-2">
+            {% csrf_token %}
+            <input type="file" name="template_file" accept=".xlsx" required
+                   class="flex-1 text-xs text-stone-600 border border-stone-300 rounded-md
+                          file:mr-2 file:py-1.5 file:px-2.5 file:border-0 file:rounded-l-md
+                          file:bg-stone-100 file:text-stone-700 file:text-xs
+                          hover:file:bg-stone-200 cursor-pointer">
+            <button type="submit"
+                    class="shrink-0 rounded-md bg-stone-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-900 transition">
+                อัปโหลดเป็นเวอร์ชันใหม่
+            </button>
+        </form>
+    </div>
+    {% endfor %}
+</div>
+
+{% endblock %}

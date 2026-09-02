@@ -1,0 +1,40 @@
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/python:3.12
+    volumes:
+      - ../..:/workspaces:cached
+    command: sleep infinity
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: gtd_poc
+      DB_USER: app_role              # ใช้ตอนรันเว็บจริง — role จำกัดสิทธิ์ที่ RLS บังคับ
+      DB_PASSWORD: app_password
+      DB_ADMIN_USER: postgres        # ใช้แค่ตอนรัน schema.sql/migrate เท่านั้น (ดู core/db.py)
+      DB_ADMIN_PASSWORD: postgres
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gtd_poc
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin12345
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+
+volumes:
+  pgdata:

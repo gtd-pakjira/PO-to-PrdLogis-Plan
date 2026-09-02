@@ -1,0 +1,129 @@
+# sku_master.yaml
+# ที่มา:
+#   - barcode, name_en (item_name), unit_price(ล่าสุด) : จาก cpall_po_export_20260825.xlsx (PO จริง = ที่มาที่เชื่อถือได้)
+#   - pack_size (บรรจุ/ตก. = จำนวนชิ้นต่อลัง) : จาก แพลน 7-11.xlsx (ไม่มีในไฟล์ PO ต้องตั้งเอง)
+# วันที่สกัด: 2026-08-26
+#
+# หมายเหตุบาร์โค้ดไม่ตรงกัน (พบระหว่างเทียบ PO กับ Template เดิม — ยึดบาร์โค้ดจาก PO เป็นหลักตามที่ตกลงกัน):
+#   - บาร์โค้ดที่ 10 (องุ่นดำไร้เมล็ด 300 กรัม): Template ใส่บาร์โค้ดผิด เอาเลขของ "สาลี่ทองแพ็ก 2 ผล" มาใส่แทน
+#     (Template = 8859388010284, ที่ถูกต้องจาก PO = 8859388002562)
+#   - บาร์โค้ดที่ 14 (องุ่นเคียวโฮ 300 กรัม): Template พิมพ์เกิน 1 หลัก (88859388000063 -> ที่ถูก 8859388000063)
+#   - บาร์โค้ดที่ 15 (ลูกไหนจิ๋ว 200 กรัม): Template พิมพ์ผิด (88593988001091 -> ที่ถูก 8859388001091)
+
+skus:
+  - barcode: "8859388000025"
+    name_th: "องุ่นดำไร้เมล็ด 150 กรัม"
+    name_en: "Black Grapes Seedless 150g x 36P"
+    pack_size: 36
+    unit_price: 21.5
+
+  - barcode: "8859388000100"
+    name_th: "องุ่นแดงนอกมีเมล็ด 200 กรัม"
+    name_en: "Red Seed 200g x 32P"
+    pack_size: 32
+    unit_price: 24.0
+
+  - barcode: "8859388008885"
+    name_th: "เชอร์รี่สดนำเข้า 150 กรัม"
+    name_en: "Cherry 150g x 36P (USA)"
+    pack_size: 36
+    unit_price: 64.0
+
+  - barcode: "8859388000445"
+    name_th: "ส้มแพ็ก 4 ผล"
+    name_en: "Orange 4pcs x 14P"
+    pack_size: 14
+    unit_price: 43.0
+
+  - barcode: "8859388000568"
+    name_th: "แอปเปิ้ลแพ็ก 4 ผล"
+    name_en: "Apple 4pcs x 14P"
+    pack_size: 14
+    unit_price: 38.0
+
+  - barcode: "8859388007000"
+    name_th: "องุ่นแดงไร้เมล็ด 150 กรัม"
+    name_en: "Red Seedless 150g x 32P (China)"
+    pack_size: 32
+    unit_price: 21.5
+
+  - barcode: "8859388000087"
+    name_th: "พุทราจีน 200 กรัม"
+    name_en: "Jujube 200g x 27P (China)"
+    pack_size: 27
+    unit_price: 33.0
+
+  - barcode: "2003009710008"
+    name_th: "สตรอว์เบอร์รี 250 กรัม"
+    name_en: "Strawberry 250g x 27P (AUS)"
+    pack_size: 27
+    unit_price: 125.0
+
+  - barcode: "2003009720007"
+    name_th: "บลูเบอร์รี่ 125 กรัม"
+    name_en: "Blueberry 125g x 36P (Peru)"
+    pack_size: 36
+    unit_price: 55.0
+
+  - barcode: "8859388002562"
+    name_th: "องุ่นดำไร้เมล็ด 300 กรัม"
+    name_en: "Black Grapes Seedless 300g x 20P"
+    pack_size: 20
+    unit_price: 43.0
+    note: "Template เดิมใส่บาร์โค้ดผิด (เอาเลขของสาลี่ทองแพ็ก 2 ผลมาใส่) — ใช้เลขนี้จาก PO แทน"
+
+  - barcode: "8859388000018"
+    name_th: "องุ่นไชน์มัสแคท 300 กรัม"
+    name_en: "Shine Muscat 300g x 15P"
+    pack_size: 15
+    unit_price: 79.0
+
+  - barcode: "8859388000759"
+    name_th: "แอปเปิลแดงวอชิงตันลูกเดี่ยว"
+    name_en: "Washington Apple (single) x 45P"
+    pack_size: 45
+    unit_price: 17.0
+
+  - barcode: "8859388000223"
+    name_th: "องุ่นสวีทแซฟไฟร์ 300 กรัม"
+    name_en: "Sweet Sapphire 300g x 15P"
+    pack_size: 15
+    unit_price: 59.3
+
+  - barcode: "8859388000063"
+    name_th: "องุ่นเคียวโฮ 300 กรัม"
+    name_en: "Kyoho Grape 300g x 15P"
+    pack_size: 15
+    unit_price: 66.5
+    note: "Template เดิมพิมพ์บาร์โค้ดเกิน 1 หลัก — ใช้เลขนี้จาก PO แทน"
+
+  - barcode: "8859388001091"
+    name_th: "ลูกไหนจิ๋ว 200 กรัม"
+    name_en: "Plum 200g x 27P"
+    pack_size: 27
+    unit_price: 34.0
+    note: "Template เดิมพิมพ์บาร์โค้ดผิด — ใช้เลขนี้จาก PO แทน"
+
+  - barcode: "8859388001084"
+    name_th: "องุ่นแดงไร้เมล็ด 300 กรัม"
+    name_en: "Red Seedless 300g x 20P (China)"
+    pack_size: 20
+    unit_price: 42.0
+
+  - barcode: "8859388010239"
+    name_th: "เบอร์รี่ดูโอ้ 160 กรัม"
+    name_en: "Berry Duo 160g x 32P"
+    pack_size: 32
+    unit_price: 90.0
+
+  - barcode: "8859388010284"
+    name_th: "สาลี่ทองแพ็ก 2 ผล"
+    name_en: "Pear 2pcs x 15P"
+    pack_size: 15
+    unit_price: 31.16
+
+  - barcode: "8859388010277"
+    name_th: "สาลี่ทองแพ็ก 4 ผล (800g.)"
+    name_en: "Pear 4pcs (800g) x 8P"
+    pack_size: 8
+    unit_price: 62.31

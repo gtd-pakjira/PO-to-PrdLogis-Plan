@@ -1,0 +1,31 @@
+{% comment %}
+ใช้ร่วมกันระหว่างหน้า PO/แผน — ต้องส่ง context: total, page, page_size, total_pages, base_qs (querystring
+อื่นๆ ที่ต้องคงไว้เวลาเปลี่ยนหน้า/ขนาดหน้า เช่น "&q=xxx" หรือ "&status=success", string เปล่าได้ถ้าไม่มี)
+{% endcomment %}
+<div class="flex items-center justify-between mt-4 text-sm text-stone-500">
+    <div class="flex items-center gap-2">
+        <span>แสดง</span>
+        <select onchange="location.href='?page=1&page_size='+this.value+'{{ base_qs }}'"
+                class="rounded-md border border-stone-300 px-2 py-1 text-sm">
+            <option value="10" {% if page_size == 10 %}selected{% endif %}>10</option>
+            <option value="50" {% if page_size == 50 %}selected{% endif %}>50</option>
+            <option value="100" {% if page_size == 100 %}selected{% endif %}>100</option>
+        </select>
+        <span>จากทั้งหมด {{ total }} รายการ</span>
+    </div>
+    <div class="flex items-center gap-1">
+        {% if page > 1 %}
+        <a href="?page={{ page|add:"-1" }}&page_size={{ page_size }}{{ base_qs }}"
+           class="px-2.5 py-1.5 rounded-md border border-stone-200 hover:bg-stone-50 transition">&lt;</a>
+        {% else %}
+        <span class="px-2.5 py-1.5 rounded-md border border-stone-100 text-stone-300">&lt;</span>
+        {% endif %}
+        <span class="px-2 mono text-xs">{{ page }} / {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="?page={{ page|add:"1" }}&page_size={{ page_size }}{{ base_qs }}"
+           class="px-2.5 py-1.5 rounded-md border border-stone-200 hover:bg-stone-50 transition">&gt;</a>
+        {% else %}
+        <span class="px-2.5 py-1.5 rounded-md border border-stone-100 text-stone-300">&gt;</span>
+        {% endif %}
+    </div>
+</div>

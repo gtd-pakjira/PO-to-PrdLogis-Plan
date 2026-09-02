@@ -1,0 +1,14 @@
+{% extends "cpall/base.html" %}
+{% block nav_po %}active{% endblock %}
+{% block title %}นำเข้า PO — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">นำเข้า PO</h1>
+    <p class="text-sm text-stone-500 mt-1">อัปโหลดไฟล์ PO Export (.xlsx) พร้อมระบุวันที่ของรอบนี้</p>
+</div>
+
+{% include "cpall/_import_form.html" %}
+
+{% endblock %}

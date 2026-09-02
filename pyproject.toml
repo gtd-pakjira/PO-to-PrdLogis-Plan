@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+exclude = [
+    "migrations",
+    "cpall/data",
+    "cpall/excel_templates",
+]
+
+[tool.ruff.lint]
+# เริ่มจากกฎพื้นฐานที่มีประโยชน์จริง ไม่บังคับจัดฟอร์แมตทุกอย่างทันที (กันของเดิมพังยกใหญ่)
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (ตัวแปรไม่ใช้, import ไม่ใช้ ฯลฯ)
+    "I",   # import sorting
+]
+ignore = [
+    "E501",  # บรรทัดยาวเกิน — ปล่อยผ่านไปก่อน มี string ภาษาไทยยาวๆ เยอะ
+]

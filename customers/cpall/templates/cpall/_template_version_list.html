@@ -1,0 +1,41 @@
+{% comment %}
+เศษ template แยกออกมา (ใช้ทั้งตอนโหลดหน้าปกติ และตอน HTMX swap หลังกู้คืน/ลบเวอร์ชัน) — เพราะทั้ง
+"กู้คืน" และ "ลบเวอร์ชันที่ active อยู่" กระทบมากกว่า 1 การ์ด (badge "ใช้งานอยู่" ย้ายไปการ์ดอื่น) จึง
+สลับทั้งลิสต์ทีเดียวง่ายกว่าพยายามอัปเดตทีละการ์ด
+{% endcomment %}
+<div id="version-list" class="grid gap-2 max-w-lg">
+    {% for v in versions %}
+    <div class="bg-white rounded-lg border {% if v.is_active %}border-emerald-300{% else %}border-stone-200{% endif %} px-4 py-3.5">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <span class="mono text-sm font-medium text-stone-800">เวอร์ชัน {{ v.version_number }}</span>
+                {% if v.is_active %}
+                <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">ใช้งานอยู่</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center gap-3 text-sm">
+                {% if not v.is_active %}
+                <form hx-post="{% url 'cpall:template_version_restore' key v.id %}" class="inline"
+                      hx-confirm="ตั้งเวอร์ชัน {{ v.version_number }} เป็นเวอร์ชันที่ใช้งานอยู่เลยไหม?"
+                      hx-target="#version-list" hx-swap="outerHTML">
+                    {% csrf_token %}
+                    <button type="submit" class="text-emerald-700 hover:underline font-medium">ใช้เวอร์ชันนี้</button>
+                </form>
+                {% endif %}
+                <form hx-post="{% url 'cpall:template_version_delete' key v.id %}" class="inline"
+                      hx-confirm="ลบเวอร์ชัน {{ v.version_number }} ถาวรเลยไหม?"
+                      hx-target="#version-list" hx-swap="outerHTML">
+                    {% csrf_token %}
+                    <button type="submit" class="text-stone-400 hover:text-red-600" title="ลบเวอร์ชันนี้">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                    </button>
+                </form>
+            </div>
+        </div>
+        <p class="text-xs text-stone-400 mt-1">
+            อัปโหลดเมื่อ {{ v.uploaded_at|date:"d/m/Y H:i" }}
+            {% if v.validation_summary %} &middot; {{ v.validation_summary }}{% endif %}
+        </p>
+    </div>
+    {% endfor %}
+</div>

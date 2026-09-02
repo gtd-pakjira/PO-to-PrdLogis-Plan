@@ -1,0 +1,48 @@
+<div id="resolve-form-container">
+    {% if error %}
+    <div class="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 max-w-2xl">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form hx-post="{% url 'cpall:resolve_locations' po_import_id %}"
+          hx-target="#resolve-form-container" hx-swap="outerHTML" class="max-w-2xl space-y-4">
+        {% csrf_token %}
+
+        {% for fc_code, name_th in unknown_locations %}
+        <div class="bg-white rounded-lg border border-stone-200 p-4">
+            <p class="text-sm font-medium text-stone-900 mb-3">
+                <span class="mono text-stone-400">{{ fc_code }}</span> — {{ name_th }}
+            </p>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-stone-600 mb-1">กลุ่มพื้นที่ที่มีอยู่</label>
+                    <select name="group_{{ fc_code }}"
+                            class="block w-full rounded-md border border-stone-300 px-2.5 py-1.5 text-sm">
+                        <option value="">— เลือก —</option>
+                        {% for g in existing_groups %}
+                        <option value="{{ g }}">{{ g }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-stone-600 mb-1">หรือตั้งกลุ่มใหม่</label>
+                    <input type="text" name="new_group_{{ fc_code }}" placeholder="เช่น กลุ่มใหม่"
+                           class="block w-full rounded-md border border-stone-300 px-2.5 py-1.5 text-sm">
+                </div>
+            </div>
+            <div class="mt-3">
+                <label class="block text-xs font-medium text-stone-600 mb-1">ชื่อจุดส่งย่อย</label>
+                <input type="text" name="sub_location_{{ fc_code }}" required
+                       placeholder="เช่น {{ name_th }}"
+                       class="block w-full rounded-md border border-stone-300 px-2.5 py-1.5 text-sm">
+            </div>
+        </div>
+        {% endfor %}
+
+        <button type="submit"
+                class="rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-800 transition">
+            บันทึกและใช้งานต่อ
+        </button>
+    </form>
+</div>

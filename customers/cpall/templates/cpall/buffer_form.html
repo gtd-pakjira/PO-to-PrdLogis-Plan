@@ -1,0 +1,48 @@
+{% extends "cpall/base.html" %}
+{% block nav_plan %}active{% endblock %}
+{% block title %}กรอกยอดเผื่อ — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">กรอกยอดเผื่อ (รอบเช้าต่างจังหวัด)</h1>
+    <p class="text-sm text-stone-500 mt-1">
+        เฉพาะ SKU ที่เกี่ยวข้องกับกลุ่มรอบเช้าต่างจังหวัด — ค่าเริ่มต้นดึงมาจากไฟล์เทมเพลตล่าสุด แก้ตัวเลขได้ตรงนี้เลยก่อนสร้างแผน
+    </p>
+</div>
+
+<form hx-post="{% url 'cpall:buffer_form_submit' %}" hx-swap="none" class="max-w-2xl">
+    {% csrf_token %}
+    <input type="hidden" name="po_import_ids_str" value="{{ po_import_ids_str }}">
+
+    <div class="bg-white rounded-lg border border-stone-200 overflow-hidden mb-5">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-stone-200 bg-stone-50 text-left text-stone-500">
+                    <th class="px-4 py-3 font-medium">SKU</th>
+                    <th class="px-4 py-3 font-medium text-right w-32">ยอดเผื่อ</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-stone-100">
+                {% for sku in sku_rows %}
+                <tr class="hover:bg-stone-50 transition">
+                    <td class="px-4 py-2.5 text-stone-800">{{ sku.name_th }}</td>
+                    <td class="px-4 py-2.5 text-right">
+                        <input type="number" name="buffer_{{ sku.barcode }}" value="{{ sku.default_buffer }}"
+                               min="0" step="1"
+                               class="w-24 text-right rounded-md border border-stone-300 px-2 py-1 text-sm
+                                      focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600">
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <button type="submit"
+            class="rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-800 transition">
+        สร้างแผน
+    </button>
+</form>
+
+{% endblock %}

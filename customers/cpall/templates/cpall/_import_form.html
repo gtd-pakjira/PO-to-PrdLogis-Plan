@@ -1,0 +1,18 @@
+{% load crispy_forms_tags %}
+<div id="import-form-container" class="bg-white rounded-lg border border-stone-200 p-6 max-w-lg">
+    <form hx-post="{% url 'cpall:import_submit' %}" hx-target="#import-form-container" hx-swap="outerHTML"
+          hx-encoding="multipart/form-data">
+        {% csrf_token %}
+        {{ form|crispy }}
+
+        <p class="text-xs text-stone-400 mt-1 mb-5">
+            เช่น รอบบ่าย (~13:30) วันที่ผลิตและวันที่ PO มักไม่ตรงกัน — รอบเช้าต่างจังหวัดมักเป็นวันเดียวกัน
+        </p>
+
+        <button type="submit"
+                class="w-full rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white
+                       hover:bg-emerald-800 transition">
+            นำเข้า PO
+        </button>
+    </form>
+</div>
