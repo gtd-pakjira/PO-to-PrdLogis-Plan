@@ -23,7 +23,6 @@ PO1, PO2, PO3... ตามลำดับนั้น เป็นการเ�
     เช่น: python -m src.logistic_plan_export 1 บางบัวทอง cpall/data/output/บางบัวทอง.xlsx
 """
 import re
-import sys
 from collections import defaultdict
 
 import openpyxl
@@ -31,12 +30,60 @@ import openpyxl
 from customers.cpall.logic.date_utils import fixed_date_resolver, update_date_headers
 from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location_and_po
 
-GROUP_TEMPLATES = {
-    "บางบัวทอง": ("customers/cpall/excel_templates/logistic_plan_บางบัวทอง.xlsx", "บางบัวทอง-ผลิต"),
-    "มหาชัย": ("customers/cpall/excel_templates/logistic_plan_มหาชัย.xlsx", "มหาชัย-ผลิต"),
-    "สุวรรณภูมิ": ("customers/cpall/excel_templates/logistic_plan_สุวรรณภูมิ.xlsx", "สุวรรณภูมิ-ผลิต"),
-    "รอบเช้าต่างจังหวัด": ("customers/cpall/excel_templates/logistic_plan_รอบเช้าต่างจังหวัด.xlsx", "บางบัวทอง-ผลิต"),
-}
+
+def get_po_number_by_column_label(po_import_ids: list[int], group_name: str) -> dict:
+    """
+    คืน {"ขอนแก่น PO1": "F082833308", ...} — เลข PO จริงที่อยู่เบื้องหลังแต่ละ column_label
+    ("PO1"/"PO2" ในตารางเป็นแค่ลำดับตำแหน่งในเทมเพลต ไม่ใช่เลข PO จริง) ใช้ logic การเรียงลำดับ
+    เดียวกับตอน export_logistic_plan() เป๊ะ (เรียง po_number จากน้อยไปมากต่อ sub_location) เพื่อให้
+    ได้ผลตรงกับที่ใช้ตอนสร้างแผนจริง — ใช้แสดง tooltip ในตารางเว็บเท่านั้น ไม่กระทบการคำนวณอะไรเลย
+    """
+    from customers.cpall.models import LocationMapping
+
+    raw = get_grouped_quantities_by_sub_location_and_po(po_import_ids)
+    # "group_name" อาจมีหลาย sub_location ในกลุ่มเดียว (เช่น "รอบเช้าต่างจังหวัด") — ดึงจาก
+    # location_mapping ตรงๆ แทนที่จะเดาจากชื่อกลุ่ม
+    group_sub_locations = set(
+        LocationMapping.objects.filter(group=group_name).values_list("sub_location", flat=True)
+    )
+
+    po_numbers_by_sub_location = defaultdict(set)
+    for row in raw:
+        if row["sub_location"] in group_sub_locations:
+            po_numbers_by_sub_location[row["sub_location"]].add(row["po_number"])
+
+    result = {}
+    for sub_loc, po_numbers in po_numbers_by_sub_location.items():
+        sorted_pos = sorted(po_numbers)
+        if len(sorted_pos) == 1:
+            result[sub_loc] = sorted_pos[0]  # คอลัมน์เดียว ไม่มี "PO1" ต่อท้าย (เช่น มหาชัย)
+        else:
+            for i, po_number in enumerate(sorted_pos, start=1):
+                result[f"{sub_loc} PO{i}"] = po_number
+    return result
+
+
+def get_group_templates() -> dict:
+    """
+    คืน dict รูปแบบเดียวกับ GROUP_TEMPLATES เดิม (เพื่อไม่ต้องแก้โค้ดที่ใช้อยู่เดิมเยอะเกินจำเป็น):
+    {group_name: (template_path, sheet_name)} — แต่ query สดจาก database ทุกครั้งแทนที่จะ hardcode
+    ไว้เป็น module constant ตอน import — เพิ่ม/แก้/ปิดใช้งานกลุ่มพื้นที่ผ่านหน้าเว็บได้เลย ไม่ต้องแก้
+    โค้ด+deploy ใหม่แล้ว (เดิมต้องแก้ GROUP_TEMPLATES ในไฟล์นี้ตรงๆ ถ้าจะเพิ่มกลุ่มที่ 5)
+
+    ไม่ cache ไว้ตรงๆ เพราะ query นี้เบามาก (ไม่กี่แถว) และการันตีว่าเห็นข้อมูลล่าสุดเสมอ (เช่น ถ้า
+    Admin เพิ่งปิดใช้งานกลุ่มไปหมาดๆ) สำคัญกว่าการประหยัด query 1 ครั้ง
+    """
+    from customers.cpall.models import LogisticGroup
+
+    result = {}
+    for g in LogisticGroup.objects.filter(is_active=True):
+        # ไฟล์ "live" ของเทมเพลตนี้ (path ตายตัวที่ export logic ทั้งหมดอ่านจากตรงนี้เสมอ) — ต้องตรง
+        # กับ pattern เดิมที่ไฟล์จริงมีอยู่แล้ว: "logistic_plan_{ชื่อกลุ่ม}.xlsx" (ตรงกับที่
+        # template_manager.py ใช้ sync ไฟล์ live จาก TemplateVersion ที่ active อยู่ด้วย)
+        live_path = f"customers/cpall/excel_templates/logistic_plan_{g.group_name}.xlsx"
+        result[g.group_name] = (live_path, g.sheet_name)
+    return result
+
 
 PO_LABEL_RE = re.compile(r"^PO\s*(\d+)$", re.IGNORECASE)
 HEADER_SEARCH_ROWS_ABOVE = 6   # ค้นหาป้ายกำกับ (PO n / ชื่อจุดส่งย่อย / แพค) ในกี่แถวเหนือแถวหัว SKU
@@ -202,10 +249,11 @@ def read_buffer_qty_from_template(group_name: str = "รอบเช้าต่
     — ตอนนี้แค่จำลองว่า "เอาค่าที่กรอกไว้ในไฟล์เทมเพลตนี้ไปใช้กับทั้ง Production Plan" ตามที่ตกลงกัน
     ต้องยืนยันกับ Admin จริงอีกทีว่าใช้หลักการนี้ถูกไหม
     """
-    if group_name not in GROUP_TEMPLATES:
+    group_templates = get_group_templates()
+    if group_name not in group_templates:
         raise LogisticPlanError(f"ไม่รู้จักกลุ่มพื้นที่ '{group_name}'")
 
-    template_path, sheet_name = GROUP_TEMPLATES[group_name]
+    template_path, sheet_name = group_templates[group_name]
     wb = openpyxl.load_workbook(template_path, data_only=True)  # data_only เพราะยอดเผื่อเป็นค่าคงที่ ไม่ใช่สูตร
     ws = wb[sheet_name]
 
@@ -232,10 +280,11 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
     if isinstance(po_import_ids, int):
         po_import_ids = [po_import_ids]
 
-    if group_name not in GROUP_TEMPLATES:
-        raise LogisticPlanError(f"ไม่รู้จักกลุ่มพื้นที่ '{group_name}' (ต้องเป็นหนึ่งใน {list(GROUP_TEMPLATES)})")
+    group_templates = get_group_templates()
+    if group_name not in group_templates:
+        raise LogisticPlanError(f"ไม่รู้จักกลุ่มพื้นที่ '{group_name}' (ต้องเป็นหนึ่งใน {list(group_templates)})")
 
-    template_path, sheet_name = GROUP_TEMPLATES[group_name]
+    template_path, sheet_name = group_templates[group_name]
     wb = openpyxl.load_workbook(template_path)
     ws = wb[sheet_name]
 
@@ -365,14 +414,3 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
     print(f"[logistic_plan_export:{group_name}] เขียนไฟล์ {output_path} — กรอกยอดครบ {len(filled_skus)} SKU")
 
     return output_path
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Usage: python -m src.logistic_plan_export <po_import_id> [<po_import_id_2> ...] "
-              "<group_name> <output_path>")
-        print(f"  group_name ต้องเป็นหนึ่งใน: {list(GROUP_TEMPLATES)}")
-        sys.exit(1)
-
-    *import_ids_str, group_name, output_path = sys.argv[1:]
-    export_logistic_plan([int(x) for x in import_ids_str], group_name, output_path)

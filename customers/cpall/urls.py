@@ -17,6 +17,7 @@ urlpatterns = [
     path("plan/<int:plan_run_id>/", views.view_plan, name="view_plan"),
     path("plan/<int:plan_run_id>/download/production/", views.download_production, name="download_production"),
     path("plan/<int:plan_run_id>/download/logistic/<str:group_name>/", views.download_logistic, name="download_logistic"),
+    path("plan/<int:plan_run_id>/download/all/", views.download_all_zip, name="download_all_zip"),
     path("templates/", views.template_list, name="template_list"),
     path("templates/<str:key>/download/", views.template_download, name="template_download"),
     path("templates/<str:key>/upload/", views.template_upload, name="template_upload"),
@@ -29,5 +30,7 @@ urlpatterns = [
     path("plan/<int:plan_run_id>/table/production/", views.view_production_table, name="view_production_table"),
     path("plan/<int:plan_run_id>/table/logistic/<str:group_name>/", views.view_logistic_table, name="view_logistic_table"),
     path("po/<int:po_import_id>/delete/", views.delete_po_import_view, name="delete_po_import"),
+    path("po/<int:po_import_id>/", views.view_po_detail, name="view_po_detail"),
+    path("po/<int:po_import_id>/download/", views.download_po, name="download_po"),
     path("plan/<int:plan_run_id>/delete/", views.delete_plan_run_view, name="delete_plan_run"),
 ]

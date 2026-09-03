@@ -33,7 +33,7 @@
             </div>
         </div>
         <p class="text-xs text-stone-400 mt-1">
-            อัปโหลดเมื่อ {{ v.uploaded_at|date:"d/m/Y H:i" }}
+            {% if v.original_filename %}ไฟล์: {{ v.original_filename }} &middot; {% endif %}อัปโหลดเมื่อ {{ v.uploaded_at|date:"d/m/Y H:i" }}
             {% if v.validation_summary %} &middot; {{ v.validation_summary }}{% endif %}
         </p>
     </div>

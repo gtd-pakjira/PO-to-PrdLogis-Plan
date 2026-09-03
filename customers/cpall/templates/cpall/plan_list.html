@@ -12,15 +12,7 @@
 </div>
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
-    <div class="flex gap-1.5">
-        <a href="?status=all&page_size={{ page_size }}" class="px-3 py-1.5 text-xs font-medium rounded-lg border transition {% if status == 'all' %}bg-stone-800 text-white border-stone-800{% else %}bg-white text-stone-600 border-stone-200 hover:border-stone-300{% endif %}">ทั้งหมด</a>
-        <a href="?status=success&page_size={{ page_size }}" class="px-3 py-1.5 text-xs font-medium rounded-lg border transition {% if status == 'success' %}bg-emerald-700 text-white border-emerald-700{% else %}bg-white text-stone-600 border-stone-200 hover:border-stone-300{% endif %}">สำเร็จ</a>
-        <a href="?status=failed&page_size={{ page_size }}" class="px-3 py-1.5 text-xs font-medium rounded-lg border transition {% if status == 'failed' %}bg-red-600 text-white border-red-600{% else %}bg-white text-stone-600 border-stone-200 hover:border-stone-300{% endif %}">ล้มเหลว</a>
-    </div>
-
     <form method="get" class="flex items-center gap-2">
-        <input type="hidden" name="status" value="{{ status }}">
-        <input type="hidden" name="page_size" value="{{ page_size }}">
         <label class="text-xs text-stone-500">สร้างระหว่าง</label>
         <input type="date" name="date_from" value="{{ date_from }}"
                class="rounded-md border border-stone-300 px-2 py-1 text-xs">
@@ -31,7 +23,7 @@
             กรอง
         </button>
         {% if date_from or date_to %}
-        <a href="?status={{ status }}&page_size={{ page_size }}" class="text-xs text-stone-400 hover:text-stone-600 hover:underline">ล้าง</a>
+        <a href="{% url 'cpall:plan_list' %}" class="text-xs text-stone-400 hover:text-stone-600 hover:underline">ล้าง</a>
         {% endif %}
     </form>
 </div>
@@ -80,7 +72,7 @@
 
 {% else %}
 <div class="rounded-xl border border-dashed border-stone-300 bg-white px-6 py-16 text-center">
-    {% if status != 'all' or date_from or date_to %}
+    {% if date_from or date_to %}
     <p class="text-stone-500">ไม่พบแผนที่ตรงกับตัวกรองที่เลือก</p>
     <a href="{% url 'cpall:plan_list' %}" class="text-sm text-emerald-700 hover:underline mt-1 inline-block">ล้างตัวกรองทั้งหมด</a>
     {% else %}

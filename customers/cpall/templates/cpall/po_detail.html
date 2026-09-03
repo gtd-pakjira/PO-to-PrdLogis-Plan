@@ -1,0 +1,75 @@
+{% extends "cpall/base.html" %}
+{% block nav_po %}active{% endblock %}
+{% block title %}PO #{{ po.id }} — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+<div class="mb-5">
+    <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
+    <div class="flex items-center justify-between mt-1">
+        <h1 class="text-xl font-semibold text-stone-900">{{ po.display_filename }}</h1>
+        <a href="{% url 'cpall:download_po' po.id %}"
+           class="text-sm text-emerald-700 hover:underline font-medium">ดาวน์โหลด Excel</a>
+    </div>
+    <div class="flex flex-wrap gap-2 mt-2">
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-xs text-stone-600">
+            วันที่ผลิต {{ po.production_date|date:"d/m/Y" }} &middot; ส่งวันที่ PO {{ po.po_date|date:"d/m/Y" }}
+        </span>
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-xs text-stone-600">
+            นำเข้าเมื่อ {{ po.imported_at|date:"d/m/Y H:i" }} &middot; {{ po.total_rows }} แถว
+        </span>
+    </div>
+</div>
+
+<div class="mb-3 relative max-w-xs">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+    <input type="text" id="po-search" placeholder="ค้นหาสินค้า/รหัสจุดส่ง..."
+           class="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600">
+</div>
+
+<div class="card overflow-auto" style="max-height: 75vh;">
+    <table class="text-sm min-w-full border-separate" style="border-spacing: 0;">
+        <thead>
+            <tr class="text-left text-stone-500 whitespace-nowrap">
+                <th class="px-3 py-2.5 font-medium sticky left-0 top-0 z-20 bg-stone-50 border-b border-stone-200">PO</th>
+                <th class="px-3 py-2.5 font-medium sticky top-0 z-10 bg-stone-50 border-b border-stone-200">จุดส่ง</th>
+                <th class="px-3 py-2.5 font-medium sticky top-0 z-10 bg-stone-50 border-b border-stone-200">บาร์โค้ด</th>
+                <th class="px-3 py-2.5 font-medium sticky top-0 z-10 bg-stone-50 border-b border-stone-200">สินค้า</th>
+                <th class="px-3 py-2.5 font-medium text-right sticky top-0 z-10 bg-stone-50 border-b border-stone-200">จำนวน</th>
+                <th class="px-3 py-2.5 font-medium sticky top-0 z-10 bg-stone-50 border-b border-stone-200">หน่วย</th>
+                <th class="px-3 py-2.5 font-medium text-right sticky top-0 z-10 bg-stone-50 border-b border-stone-200">ราคา/ลัง</th>
+            </tr>
+        </thead>
+        <tbody id="po-rows">
+            {% for ln in po.lines %}
+            <tr class="po-row border-b border-stone-100 hover:bg-stone-50">
+                <td class="px-3 py-2 mono sticky left-0 bg-white">{{ ln.po_number }}</td>
+                <td class="px-3 py-2">{{ ln.fc_code }} — {{ ln.delivery_location }}</td>
+                <td class="px-3 py-2 mono">{{ ln.barcode }}</td>
+                <td class="px-3 py-2">{{ ln.item_name }}</td>
+                <td class="px-3 py-2 text-right mono">{{ ln.qty_ordered|floatformat:"-2" }}</td>
+                <td class="px-3 py-2">{{ ln.unit_type }}</td>
+                <td class="px-3 py-2 text-right mono">{{ ln.net_case_price|floatformat:"-2" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p id="no-match" class="hidden text-sm text-stone-400 text-center py-8">ไม่พบรายการที่ค้นหา</p>
+
+<script>
+    const searchInput = document.getElementById('po-search');
+    const rows = document.querySelectorAll('.po-row');
+    const noMatch = document.getElementById('no-match');
+    searchInput.addEventListener('input', () => {
+        const q = searchInput.value.trim().toLowerCase();
+        let visible = 0;
+        rows.forEach(row => {
+            const match = row.textContent.toLowerCase().includes(q);
+            row.style.display = match ? '' : 'none';
+            if (match) visible++;
+        });
+        noMatch.classList.toggle('hidden', visible > 0);
+    });
+</script>
+
+{% endblock %}

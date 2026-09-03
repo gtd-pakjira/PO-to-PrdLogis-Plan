@@ -10,8 +10,9 @@ raw SQL) — parse_po_file() ไม่เปลี่ยน (ยังใช้ 
 PoLine.objects.bulk_create() แทน เร็วขึ้นจริงเพราะยิง query เดียวหลายแถวแทนที่จะยิงทีละแถว
 """
 import os
-from datetime import datetime
+from datetime import date, datetime
 
+import openpyxl
 import pandas as pd
 
 from customers.cpall.logic.db import get_cpall_customer_id
@@ -43,6 +44,25 @@ class POInUseError(Exception):
     pass
 
 
+def _json_safe(value):
+    """
+    แปลงค่าจาก pandas/openpyxl ให้เก็บลง JSONField ได้ — ค่าที่ JSON เข้ารหัสตรงๆ ไม่ได้มี pd.NaT/NaN
+    (float พิเศษ, ไม่ใช่ None) และ datetime/date/Timestamp (ไม่ใช่ string) ต้องแปลงก่อนเสมอ
+
+    ไฟล์ PO ต้นฉบับปกติเก็บวันที่เป็น "ข้อความ" dd/mm/yyyy อยู่แล้ว (ไม่ใช่ Excel date object) แต่ถ้า
+    บางไฟล์ดันเป็น Excel date object จริง (pandas parse เป็น datetime/Timestamp อัตโนมัติ) ต้อง format
+    เป็น dd/mm/yyyy ให้ตรงกับที่ไฟล์ต้นฉบับแบบข้อความใช้ — ไม่ใช้ .isoformat() (yyyy-mm-dd) เพราะจะทำให้
+    ไฟล์ที่สร้างใหม่ (ตอนต้นฉบับหายไปแล้ว) แสดงผลวันที่ต่างจากต้นฉบับที่ Admin คุ้นเคย
+    """
+    if pd.isna(value):
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%d/%m/%Y")
+    if hasattr(value, "strftime"):  # pandas.Timestamp และอื่นๆ ที่มีเมธอดนี้แต่ไม่ใช่ subclass ของ datetime
+        return value.strftime("%d/%m/%Y")
+    return value
+
+
 def _to_date(value):
     """แปลงวันที่รูปแบบ 'DD/MM/YYYY' (ปี พ.ศ. หรือ ค.ศ. ตามที่ระบบลูกค้าส่งมา) เป็น datetime.date"""
     if value in (None, ""):
@@ -59,7 +79,26 @@ def _to_date(value):
 
 
 def parse_po_file(filepath: str) -> pd.DataFrame:
-    """อ่านไฟล์ PO Export คืนค่าเป็น DataFrame ที่ normalize คอลัมน์แล้ว"""
+    """
+    อ่านไฟล์ PO Export คืนค่าเป็น DataFrame ที่ normalize คอลัมน์แล้ว
+    เก็บ "ค่าทุกคอลัมน์ตามลำดับเดิม" ไว้ในคอลัมน์พิเศษ "_all_values" ของแต่ละแถวด้วย (list) และ
+    "ลำดับ+ชื่อคอลัมน์ต้นฉบับ" ไว้ใน out.attrs["column_order"] — ใช้ตอนสร้างไฟล์ใหม่ที่มีข้อมูลครบ
+    เหมือนต้นฉบับทีหลัง (ดู po_regenerator.py) แม้ว่า REQUIRED_COLUMNS จะใช้แค่ 12 คอลัมน์จาก 50+
+    คอลัมน์ที่ไฟล์จริงมีก็ตาม — เก็บด้วย "ตำแหน่ง" ไม่ใช่ "ชื่อ" เพราะไฟล์จริงมีชื่อคอลัมน์ซ้ำกันได้
+    (เช่น "Discount Percentage 1" ปรากฏ 2 รอบ) อ่าน header ต้นฉบับผ่าน openpyxl ตรงๆ แทนที่จะใช้
+    df.columns ของ pandas เพราะ pandas จะ auto-rename ชื่อซ้ำเป็น ".1"/".2" ให้เอง (ไม่ใช่ชื่อจริง)
+    """
+    wb_raw = openpyxl.load_workbook(filepath, data_only=True)
+    ws_raw = wb_raw.active
+    original_column_order = [c.value for c in next(ws_raw.iter_rows(min_row=1, max_row=1))]
+    # เก็บค่าดิบทุกแถวข้อมูล (ไม่ผ่าน pandas) ไว้คู่กับ column_order — อ่านตรงจาก openpyxl รักษา
+    # type ดั้งเดิมของแต่ละ cell แม่นยำกว่า pandas (pandas ทำ type inference ให้อัตโนมัติแม้ตั้ง
+    # dtype=object ไว้แล้วก็ตาม เช่น เลขจำนวนเต็มในไฟล์อาจถูกแปลงเป็น float โดยไม่ตั้งใจ)
+    raw_rows_by_excel_index = {
+        i: list(row) for i, row in enumerate(ws_raw.iter_rows(min_row=2, values_only=True))
+    }
+    wb_raw.close()
+
     df = pd.read_excel(filepath, sheet_name=0, dtype=object)
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
@@ -82,6 +121,13 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
     out["qty_ordered"] = pd.to_numeric(df["Ordered Quantity"], errors="coerce")
     out["unit_type"] = df["Unit Type "]
     out["net_case_price"] = pd.to_numeric(df["Net Case Price"], errors="coerce")
+    # เก็บค่าทุกคอลัมน์ตามตำแหน่งเดิม จากค่าดิบที่อ่านผ่าน openpyxl (ไม่ใช่ pandas — รักษา
+    # type ดั้งเดิมแม่นยำกว่า) จับคู่ด้วย df.index ที่ตรงกับลำดับแถวดิบเสมอ (pandas ไม่ reset index
+    # ตอน filter ทีหลัง จึงยังจับคู่ย้อนกลับไปที่แถวดิบถูกต้องแม้หลัง dropna/dedup)
+    out["_all_values"] = pd.Series(
+        [[_json_safe(v) for v in raw_rows_by_excel_index.get(i, [])] for i in df.index],
+        index=df.index, dtype=object,
+    )
 
     # แถวที่ไม่มี PO number หรือ barcode คือแถวว่าง/สรุปท้ายไฟล์ -> ตัดทิ้ง
     out = out.dropna(subset=["po_number", "barcode"])
@@ -102,6 +148,7 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
     if len(non_ct) > 0:
         print(f"[po_parser] ⚠️  พบ {len(non_ct)} แถวที่ Unit Type ไม่ใช่ 'CT' — ควรตรวจสอบ")
 
+    out.attrs["column_order"] = original_column_order
     return out
 
 
@@ -114,10 +161,12 @@ def load_po_to_db(filepath: str, production_date, po_date, imported_by: str = "a
     """
     df = parse_po_file(filepath)
     customer_id = get_cpall_customer_id()
+    column_order = df.attrs.get("column_order")
 
     po_import = PoImport.objects.create(
         customer_id=customer_id, source_filename=filepath, imported_by=imported_by,
         production_date=production_date, po_date=po_date, total_rows=len(df), status="imported",
+        column_order=column_order,
     )
 
     lines = []
@@ -139,6 +188,7 @@ def load_po_to_db(filepath: str, production_date, po_date, imported_by: str = "a
             unit_type=row["unit_type"],
             net_case_price=price,
             total_amount=(qty * price) if qty is not None and price is not None else None,
+            all_values=row["_all_values"],
         ))
     PoLine.objects.bulk_create(lines)
 
@@ -148,9 +198,12 @@ def load_po_to_db(filepath: str, production_date, po_date, imported_by: str = "a
 
 def delete_po_import(po_import_id: int):
     """
-    ลบ PO ที่ import ไว้ (แถว po_line + po_import + ไฟล์ที่อัปโหลดไว้บนดิสก์)
+    ลบ PO ที่ import ไว้ (แถว po_line + po_import + ไฟล์ที่อัปโหลดไว้บนดิสก์ ถ้ายังมีอยู่จริง — PO
+    ใหม่ตั้งแต่มีระบบ data-first ไม่มีไฟล์ค้างอยู่แล้วปกติ มีแค่ PO เก่าก่อนหน้าที่อาจยังมีไฟล์อยู่)
     ถ้าเคยถูกใช้สร้างแผนไปแล้ว (มีอยู่ใน plan_run_import) จะ raise POInUseError ทันที ไม่ลบอะไรเลย
-    — ต้องไปลบแผนที่ใช้ PO นี้ก่อน ถึงจะลบ PO ได้ (กันข้อมูลอ้างอิงพัง/แผนเก่าหาไฟล์ต้นทางไม่เจอ)
+    — ต้องไปลบแผนที่ใช้ PO นี้ก่อน ถึงจะลบ PO นี้ได้ (ไม่มีปุ่ม "บังคับลบ" ข้ามการเช็คนี้แล้ว —
+    เดิมมีไว้เผื่อไฟล์ PO หายไปจากที่เก็บ แต่ตอนนี้ PO เป็น data-first เต็มรูปแบบแล้ว ไม่มีไฟล์ให้หายอีก)
+    ถ้า PO นี้ถูกลบไปแล้ว (หาไม่เจอ) ถือว่าลบสำเร็จเงียบๆ ไม่ error — กันเคส race condition/กดซ้ำ
     """
     used_count = PlanRunImport.objects.filter(po_import_id=po_import_id).count()
     if used_count > 0:
@@ -189,7 +242,8 @@ def list_po_imports_paginated(page: int = 1, page_size: int = 10, search: str = 
     rows = qs.order_by("-imported_at")[offset:offset + page_size]
 
     items = [
-        {"id": r.id, "source_filename": r.source_filename, "production_date": r.production_date,
+        {"id": r.id, "source_filename": r.source_filename,
+         "display_filename": os.path.basename(r.source_filename), "production_date": r.production_date,
          "po_date": r.po_date, "total_rows": r.total_rows,
          "imported_at": r.imported_at, "imported_by": r.imported_by}
         for r in rows
@@ -205,7 +259,8 @@ def list_po_imports(limit: int = 50) -> list[dict]:
     """
     rows = PoImport.objects.order_by("-imported_at")[:limit]
     return [
-        {"id": r.id, "source_filename": r.source_filename, "production_date": r.production_date,
+        {"id": r.id, "source_filename": r.source_filename,
+         "display_filename": os.path.basename(r.source_filename), "production_date": r.production_date,
          "po_date": r.po_date, "total_rows": r.total_rows,
          "imported_at": r.imported_at, "imported_by": r.imported_by}
         for r in rows

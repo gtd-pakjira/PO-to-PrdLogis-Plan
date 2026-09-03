@@ -21,13 +21,33 @@ from customers.cpall.logic.excel_export import COL_NAME as PP_COL_NAME
 from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
 from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
 from customers.cpall.logic.logistic_plan_export import (
-    GROUP_TEMPLATES,
     _find_column_labels,
     _find_line_no_column,
     _find_qty_column_range,
+    get_group_templates,
 )
 from customers.cpall.logic.logistic_plan_export import _find_sku_header_rows as _find_lp_sku_header_rows
 from customers.cpall.logic.plan_view_data import _basket_total
+
+
+def _format_pack_text(value):
+    """
+    แปลงค่า 'แพค/เศษ' ที่ LibreOffice คำนวณจากสูตรของ Admin ให้เป็นข้อความเสมอ
+
+    สูตรจริงในเทมเพลต (เช่น "IF(qty=0,"", IF(MOD(qty,pack)=0, qty/pack, ...))") ตั้งใจให้คืนค่า
+    เป็น "ตัวเลขล้วน" (ไม่ใช่ string) เมื่อยอดสั่งหารด้วยขนาดแพคลงตัวพอดี (ไม่มีเศษ) — เดิมโค้ดนี้เช็ค
+    isinstance(value, str) แล้วทิ้งเป็น None ทันทีถ้าไม่ใช่ string ทำให้กรณี "ลงตัวพอดี" (ซึ่งเกิดขึ้น
+    บ่อยมาก ไม่ใช่ edge case แปลกๆ) แสดงเป็น "None" ในหน้าเว็บทั้งที่ยอดสั่งจริงถูกต้องอยู่แล้ว — เป็น
+    บั๊กจริงที่พบจากการทดสอบจริง ไม่ใช่แค่การแสดงผล (pack_text ที่เก็บใน DB เองก็เป็น None ผิดจริง)
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value if value != "" else None  # สูตรคืน "" ตอนยอดสั่ง=0 -> ไม่มีอะไรให้แสดง
+    if isinstance(value, (int, float)):
+        return str(int(value)) if value == int(value) else str(value)
+    return str(value)
+
 
 PP_COL_PRICE = 5
 PP_COL_PACK = 6
@@ -67,7 +87,7 @@ def extract_production_plan_results(filepath: str) -> list[dict]:
                 "sheet_type": "production", "group_name": None, "barcode": barcode,
                 "name_th": name_th, "name_en": name_en, "price": price, "pack_size": pack_size,
                 "column_label": sub_loc, "qty": val,
-                "pack_text": pack_text if isinstance(pack_text, str) else None,
+                "pack_text": _format_pack_text(pack_text),
                 "grand_total": None,  # เติมทีหลังหลังรวมยอดครบทุกคอลัมน์ของ SKU นี้
                 "buffer_qty": buffer_qty, "return_qty": return_qty, "basket_total": None,
             })
@@ -81,7 +101,7 @@ def extract_production_plan_results(filepath: str) -> list[dict]:
 
 def extract_logistic_plan_results(filepath: str, group_name: str) -> list[dict]:
     """เหมือน extract_production_plan_results แต่สำหรับ Logistic Plan 1 กลุ่ม"""
-    _, sheet_name = GROUP_TEMPLATES[group_name]
+    _, sheet_name = get_group_templates()[group_name]
     wb = load_calculated_workbook(filepath)
     ws = wb[sheet_name]
 
@@ -140,7 +160,7 @@ def extract_logistic_plan_results(filepath: str, group_name: str) -> list[dict]:
                 "sheet_type": "logistic", "group_name": group_name, "barcode": barcode,
                 "name_th": name_th, "name_en": name_en, "price": None, "pack_size": pack_size,
                 "column_label": label, "qty": val,
-                "pack_text": pack_text if isinstance(pack_text, str) else None,
+                "pack_text": _format_pack_text(pack_text),
                 "grand_total": grand_total, "buffer_qty": None, "return_qty": None,
                 "basket_total": basket_total,
             })

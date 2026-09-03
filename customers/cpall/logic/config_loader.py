@@ -21,9 +21,8 @@ def load_sku_master(path: str = "customers/cpall/config/sku_master.yaml"):
     skus = data.get("skus", [])
     for sku in skus:
         SkuMaster.objects.update_or_create(
-            barcode=sku["barcode"],
+            customer_id=customer_id, barcode=sku["barcode"],
             defaults={
-                "customer_id": customer_id,
                 "name_th": sku["name_th"],
                 "name_en": sku.get("name_en"),
                 "pack_size": sku["pack_size"],
@@ -43,9 +42,8 @@ def load_location_mapping(path: str = "customers/cpall/config/location_mapping.y
     locations = data.get("locations", [])
     for loc in locations:
         LocationMapping.objects.update_or_create(
-            fc_code=loc["fc_code"],
+            customer_id=customer_id, fc_code=loc["fc_code"],
             defaults={
-                "customer_id": customer_id,
                 "name_th": loc["name_th"],
                 "group": loc["group"],
                 "sub_location": loc.get("sub_location"),

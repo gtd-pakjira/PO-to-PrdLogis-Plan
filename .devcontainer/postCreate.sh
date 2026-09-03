@@ -14,7 +14,7 @@ fi
 if [ ! -f .env ]; then
     python3 -c "
 import secrets, string
-chars = string.ascii_letters + string.digits + '!@#\$%^&*(-_=+)'
+chars = string.ascii_letters + string.digits + '-_'
 key = ''.join(secrets.choice(chars) for _ in range(50))
 with open('.env.example') as f:
     content = f.read()

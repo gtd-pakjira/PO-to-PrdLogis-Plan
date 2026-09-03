@@ -28,12 +28,12 @@
         {% if po_imports %}
         <div class="space-y-2">
             {% for po in po_imports %}
-            <div class="card px-4 py-3">
-                <p class="text-sm text-stone-800 truncate">{{ po.source_filename }}</p>
+            <a href="{% url 'cpall:view_po_detail' po.id %}" class="card px-4 py-3 block hover:border-emerald-600 transition">
+                <p class="text-sm text-stone-800 truncate">{{ po.display_filename }}</p>
                 <p class="text-xs text-stone-400 mt-1">
                     PO {{ po.po_date|date:"d/m/Y" }} &middot; {{ po.total_rows|default:"—" }} แถว
                 </p>
-            </div>
+            </a>
             {% endfor %}
         </div>
         {% else %}

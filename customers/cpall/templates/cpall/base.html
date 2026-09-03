@@ -6,6 +6,11 @@
     <title>{% block title %}แพลนผลิต 7-11{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+    <style>
+        /* ซ่อน element นี้ตอนกำลังส่งคำขอ HTMX อยู่ (คู่กับ .htmx-indicator ที่ HTMX เองซ่อนไว้ปกติ
+           แล้วโชว์เฉพาะตอนกำลังส่งคำขอ) — ใช้คู่กันสลับ icon ปกติ <-> spinner ระหว่างรอผลลัพธ์ */
+        .htmx-request .hx-hide-on-load { display: none !important; }
+    </style>
     <script src="https://unpkg.com/alpinejs@3.14.8" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
@@ -32,7 +37,8 @@
         <aside class="w-56 shrink-0 bg-white border-r border-stone-200 flex flex-col">
             <div class="px-4 py-4 border-b border-stone-100">
                 <a href="/" class="flex items-center gap-2.5">
-                    <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white font-bold text-[10px] tracking-tight">7-11</span>
+                    <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white font-bold text-[10px] tracking-tight"
+                          style="background: linear-gradient(135deg, #F4811F 0%, #ED2525 55%, #008062 100%);">7-11</span>
                     <span class="font-semibold text-stone-900 text-[13.5px] leading-tight">แพลนผลิต 7-11</span>
                 </a>
             </div>

@@ -32,10 +32,10 @@ from customers.cpall.logic.excel_export import (
     _find_sku_header_rows as _find_pp_sku_header_rows,
 )
 from customers.cpall.logic.logistic_plan_export import (
-    GROUP_TEMPLATES,
     _find_column_labels,
     _find_line_no_column,
     _find_qty_column_range,
+    get_group_templates,
 )
 from customers.cpall.logic.logistic_plan_export import (
     _find_sku_header_rows as _find_lp_sku_header_rows,
@@ -160,7 +160,7 @@ def get_logistic_plan_table(filepath: str, group_name: str) -> dict:
                    "qty_by_column": {...}, "pack_text_by_column": {...}, "grand_total":}, ...]
     }
     """
-    _, sheet_name = GROUP_TEMPLATES[group_name]
+    _, sheet_name = get_group_templates()[group_name]
     wb = openpyxl.load_workbook(filepath)
     ws = wb[sheet_name]
 

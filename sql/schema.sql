@@ -25,6 +25,7 @@ INSERT INTO customer (code, name_th) VALUES ('cpall', 'CP All (7-11)')
 -- ---------- Config tables (โหลดจาก YAML ตอน seed / sync) ----------
 
 CREATE TABLE IF NOT EXISTS sku_master (
+    id              SERIAL PRIMARY KEY,        -- surrogate key (Django Admin ใช้ composite PK ไม่ได้)
     customer_id     INTEGER NOT NULL REFERENCES customer(id),
     barcode         VARCHAR(20) NOT NULL,
     name_th         TEXT NOT NULL,
@@ -33,17 +34,18 @@ CREATE TABLE IF NOT EXISTS sku_master (
     unit_price      NUMERIC(10,2),         -- ราคาล่าสุด (อ้างอิง — ราคาจริงต่อรอบมาจาก PO)
     note            TEXT,
     updated_at      TIMESTAMP DEFAULT now(),
-    PRIMARY KEY (customer_id, barcode)     -- บาร์โค้ดซ้ำกันได้ข้ามลูกค้า (คนละลูกค้า = คนละสินค้า)
+    UNIQUE (customer_id, barcode)          -- บาร์โค้ดซ้ำกันได้ข้ามลูกค้า (คนละลูกค้า = คนละสินค้า)
 );
 
 CREATE TABLE IF NOT EXISTS location_mapping (
+    id              SERIAL PRIMARY KEY,        -- surrogate key (Django Admin ใช้ composite PK ไม่ได้)
     customer_id     INTEGER NOT NULL REFERENCES customer(id),
     fc_code         VARCHAR(10) NOT NULL,      -- Delivery Location Number จาก PO เช่น FC08
     name_th         TEXT NOT NULL,
     "group"         VARCHAR(50) NOT NULL,      -- บางบัวทอง / มหาชัย / สุวรรณภูมิ
     sub_location    VARCHAR(50),
     updated_at      TIMESTAMP DEFAULT now(),
-    PRIMARY KEY (customer_id, fc_code)     -- รหัสสถานที่ซ้ำกันได้ข้ามลูกค้าเช่นกัน
+    UNIQUE (customer_id, fc_code)          -- รหัสสถานที่ซ้ำกันได้ข้ามลูกค้าเช่นกัน
 );
 
 -- ---------- PO Import (raw data ต่อรอบ) ----------
@@ -57,7 +59,10 @@ CREATE TABLE IF NOT EXISTS po_import (
     production_date DATE,   -- วันที่ผลิต (เดิมชื่อ po_date — ตั้งชื่อผิดความหมายมาตั้งแต่แรก แก้แล้ว)
     po_date         DATE,   -- วันที่ PO (เดิมชื่อ delivery_date — ก็ตั้งชื่อผิดความหมายเหมือนกัน)
     total_rows      INTEGER,
-    status          VARCHAR(20) DEFAULT 'imported'
+    status          VARCHAR(20) DEFAULT 'imported',
+    column_order    JSONB   -- ลำดับ+ชื่อคอลัมน์ทั้งหมดในไฟล์ต้นฉบับ (array) เผื่อชื่อซ้ำกัน (ไฟล์จริง
+                             -- มีคอลัมน์ชื่อซ้ำ เช่น "Discount Percentage 1" ปรากฏ 2 รอบ) ใช้ตำแหน่ง
+                             -- ไม่ใช่ชื่อจับคู่กับ po_line.all_values ตอนสร้างไฟล์ใหม่ กันปัญหาคอลัมน์ชนกัน
 );
 
 CREATE TABLE IF NOT EXISTS po_line (
@@ -75,7 +80,10 @@ CREATE TABLE IF NOT EXISTS po_line (
     qty_ordered         NUMERIC(10,2) NOT NULL,
     unit_type           VARCHAR(10),
     net_case_price      NUMERIC(10,2),
-    total_amount        NUMERIC(12,2)
+    total_amount        NUMERIC(12,2),
+    all_values          JSONB   -- ค่าทุกคอลัมน์ของแถวนี้ตามลำดับเดียวกับ po_import.column_order (array)
+                                 -- เก็บไว้ให้สร้างไฟล์ใหม่ที่มีข้อมูลครบเหมือนต้นฉบับได้ แม้จะไม่ได้ใช้
+                                 -- คอลัมน์เหล่านี้ในการคำนวณอะไรของระบบเลยก็ตาม (audit/ความครบถ้วน)
     -- หมายเหตุ: ตารางนี้ไม่มี customer_id ของตัวเอง (อ้างอิงผ่าน po_import_id พอ) และไม่เปิด RLS
     -- ตรงๆ — โค้ดของ cpall เข้าถึงผ่าน po_import_id ที่ผ่านการเช็คสิทธิ์จาก po_import แล้วเสมอ
 );
@@ -111,6 +119,42 @@ CREATE TABLE IF NOT EXISTS plan_run_logistic_file (
     error_message   TEXT
 );
 
+-- ---------- กลุ่มพื้นที่ Logistic Plan (ตั้งค่าได้ผ่านหน้าเว็บ ไม่ต้องแก้โค้ด+deploy ใหม่) ----------
+-- เดิม 4 กลุ่ม (บางบัวทอง/มหาชัย/สุวรรณภูมิ/รอบเช้าต่างจังหวัด) hardcode ไว้ในโค้ด (GROUP_TEMPLATES
+-- ใน logistic_plan_export.py) — ย้ายมาเก็บเป็นข้อมูลแทน เพิ่มกลุ่มที่ 5 ได้จากหน้าเว็บโดยตรง
+CREATE TABLE IF NOT EXISTS logistic_group (
+    id              SERIAL PRIMARY KEY,
+    customer_id     INTEGER NOT NULL REFERENCES customer(id),
+    group_name      VARCHAR(50) NOT NULL,      -- ชื่อกลุ่มพื้นที่ เช่น "บางบัวทอง"
+    template_key    VARCHAR(50) NOT NULL,      -- เชื่อมกับ template_version.template_key เช่น
+                                                -- "logistic_บางบัวทอง" — ต้องขึ้นต้นด้วย "logistic_" เสมอ
+    sheet_name      VARCHAR(100) NOT NULL,     -- ชื่อ sheet ที่ใช้จริงในไฟล์เทมเพลตของกลุ่มนี้
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,  -- ปิดใช้งานกลุ่มได้โดยไม่ต้องลบทิ้ง (กันลบพลาด)
+    created_at      TIMESTAMP DEFAULT now(),
+    UNIQUE (customer_id, group_name),
+    UNIQUE (customer_id, template_key)
+);
+CREATE INDEX IF NOT EXISTS idx_logistic_group_customer ON logistic_group(customer_id);
+
+-- seed 4 กลุ่มเดิมที่เคย hardcode ไว้ — ทำครั้งเดียว ไม่ทับถ้ามีอยู่แล้ว (สำคัญมาก: ถ้าไม่ seed
+-- ตรงนี้ ระบบจะ "ลืม" กลุ่มเดิมทั้งหมดทันทีหลัง migrate เพราะย้ายจาก hardcode มาเป็นข้อมูลแล้ว)
+DO $$
+DECLARE
+    cpall_id INTEGER;
+BEGIN
+    SELECT id INTO cpall_id FROM customer WHERE code = 'cpall';
+    IF cpall_id IS NOT NULL THEN
+        INSERT INTO logistic_group (customer_id, group_name, template_key, sheet_name, display_order)
+        VALUES
+            (cpall_id, 'บางบัวทอง', 'logistic_บางบัวทอง', 'บางบัวทอง-ผลิต', 1),
+            (cpall_id, 'มหาชัย', 'logistic_มหาชัย', 'มหาชัย-ผลิต', 2),
+            (cpall_id, 'สุวรรณภูมิ', 'logistic_สุวรรณภูมิ', 'สุวรรณภูมิ-ผลิต', 3),
+            (cpall_id, 'รอบเช้าต่างจังหวัด', 'logistic_รอบเช้าต่างจังหวัด', 'บางบัวทอง-ผลิต', 4)
+        ON CONFLICT (customer_id, group_name) DO NOTHING;
+    END IF;
+END $$;
+
 -- ---------- Template Versioning (Phase 1.6 sub-phase 1) ----------
 -- เก็บทุกเวอร์ชันของไฟล์เทมเพลตที่เคยอัปโหลดถาวร (ต่างจากของเดิมที่เก็บ backup แค่ 1 ชั้น) —
 -- ให้กู้คืนไปเวอร์ชันไหนก็ได้ในประวัติ และให้แผนแต่ละแผนอ้างอิงได้ว่าตอนสร้างใช้เทมเพลตเวอร์ชันไหน
@@ -121,6 +165,7 @@ CREATE TABLE IF NOT EXISTS template_version (
     template_key        VARCHAR(50) NOT NULL,   -- 'production_plan', 'logistic_บางบัวทอง' ฯลฯ
     version_number      INTEGER NOT NULL,
     file_path           TEXT NOT NULL,          -- ที่เก็บถาวรของไฟล์เวอร์ชันนี้ (คนละที่กับไฟล์ live)
+    original_filename   TEXT,                   -- ชื่อไฟล์ตอนที่ Admin อัปโหลดจริง (เช่น "logistic_plan_บางบัวทอง_v2.xlsx") ไว้ให้ดูย้อนหลังว่าไฟล์นี้คือไฟล์ไหน
     is_active           BOOLEAN NOT NULL DEFAULT FALSE,
     uploaded_at         TIMESTAMP DEFAULT now(),
     validation_summary  TEXT,                   -- เช่น "sku_count=19" เก็บไว้ดูย้อนหลังเฉยๆ
@@ -128,10 +173,43 @@ CREATE TABLE IF NOT EXISTS template_version (
 );
 CREATE INDEX IF NOT EXISTS idx_template_version_key ON template_version(customer_id, template_key);
 
+-- ฐานข้อมูลที่เคยรัน schema.sql เวอร์ชันก่อนหน้ามาแล้ว (มี template_version อยู่แล้วแบบไม่มี
+-- original_filename) เพิ่มคอลัมน์ให้ — ค่าเก่าที่มีอยู่แล้วจะเป็น NULL (ไม่รู้ชื่อไฟล์ต้นฉบับ เพราะ
+-- ตอนอัปโหลดยังไม่ได้เก็บไว้ — ไม่กระทบการทำงานอะไร แค่ช่องว่างเฉยๆ)
+ALTER TABLE template_version ADD COLUMN IF NOT EXISTS original_filename TEXT;
+
 -- เชื่อมแผนที่สร้างไว้เข้ากับเทมเพลตเวอร์ชันที่ใช้จริงตอนนั้น — NULL ได้สำหรับแผนเก่าก่อนมีระบบนี้
 -- (การ "บันทึกจริง" ว่าใช้เวอร์ชันไหนทำใน sub-phase 3 ตอนเปลี่ยน flow สร้างแผน — คอลัมน์นี้แค่เตรียมที่ไว้)
 ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS production_template_version_id INTEGER
     REFERENCES template_version(id);
+
+-- ฐานข้อมูลที่เคยรัน schema.sql เวอร์ชันก่อนหน้ามาแล้ว (มี po_import/po_line อยู่แล้วแบบไม่มีคอลัมน์
+-- เก็บข้อมูลครบทุกคอลัมน์ของไฟล์ต้นฉบับ) เพิ่มคอลัมน์ให้ — ค่าเก่าที่มีอยู่แล้วจะเป็น NULL (แผน/PO เก่า
+-- ก่อนมีระบบนี้ยังใช้งานได้ปกติ แค่ regenerate ไฟล์แบบครบทุกคอลัมน์ไม่ได้ ต้อง fallback อย่างอื่นแทน)
+ALTER TABLE po_import ADD COLUMN IF NOT EXISTS column_order JSONB;
+ALTER TABLE po_line ADD COLUMN IF NOT EXISTS all_values JSONB;
+
+-- sku_master/location_mapping: เปลี่ยนจาก composite PK (customer_id, barcode/fc_code) เป็น
+-- surrogate key (id) ต่างหาก — composite PK ใช้กับ Django Admin ไม่ได้ (ข้อจำกัดที่รู้มาตั้งแต่แรก
+-- เพิ่งมาแก้ตอนนี้) ไม่กระทบข้อมูลเดิมเลย (แค่เปลี่ยน PK ไม่ได้ลบ/ย้ายอะไร) ปลอดภัย รันซ้ำได้
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'sku_master' AND column_name = 'id') THEN
+        ALTER TABLE sku_master ADD COLUMN id SERIAL;
+        ALTER TABLE sku_master DROP CONSTRAINT sku_master_pkey;
+        ALTER TABLE sku_master ADD PRIMARY KEY (id);
+        ALTER TABLE sku_master ADD CONSTRAINT sku_master_customer_barcode_key UNIQUE (customer_id, barcode);
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'location_mapping' AND column_name = 'id') THEN
+        ALTER TABLE location_mapping ADD COLUMN id SERIAL;
+        ALTER TABLE location_mapping DROP CONSTRAINT location_mapping_pkey;
+        ALTER TABLE location_mapping ADD PRIMARY KEY (id);
+        ALTER TABLE location_mapping ADD CONSTRAINT location_mapping_customer_fc_code_key UNIQUE (customer_id, fc_code);
+    END IF;
+END $$;
 ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS template_version_id INTEGER
     REFERENCES template_version(id);
 
@@ -278,6 +356,13 @@ ALTER TABLE template_version ENABLE ROW LEVEL SECURITY;
 ALTER TABLE template_version FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS customer_isolation ON template_version;
 CREATE POLICY customer_isolation ON template_version
+    USING (customer_id::text = current_setting('app.current_customer_id', true))
+    WITH CHECK (customer_id::text = current_setting('app.current_customer_id', true));
+
+ALTER TABLE logistic_group ENABLE ROW LEVEL SECURITY;
+ALTER TABLE logistic_group FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS customer_isolation ON logistic_group;
+CREATE POLICY customer_isolation ON logistic_group
     USING (customer_id::text = current_setting('app.current_customer_id', true))
     WITH CHECK (customer_id::text = current_setting('app.current_customer_id', true));
 

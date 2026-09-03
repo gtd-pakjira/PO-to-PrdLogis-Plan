@@ -1,9 +1,12 @@
 """
 views.py — หน้าเว็บทั้งหมดของโมดูล cpall (CP All / 7-11)
 """
+import io
 import json
 import os
+import zipfile
 from datetime import datetime
+from urllib.parse import quote
 
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import redirect, render
@@ -39,12 +42,14 @@ from customers.cpall.logic.po_parser import (
     list_po_imports_paginated,
     load_po_to_db,
 )
+from customers.cpall.logic.po_regenerator import PORegenerateError, regenerate_po_file_bytes
+from customers.cpall.logic.po_view_data import get_po_detail
 from customers.cpall.logic.template_manager import (
-    TEMPLATE_REGISTRY,
     TemplateInUseError,
     TemplateValidationError,
     delete_version,
     get_template_grid,
+    get_template_registry,
     list_templates,
     list_versions,
     restore_to_version,
@@ -158,6 +163,13 @@ def import_submit(request):
         return error_response(f"ไฟล์ PO มีปัญหา: {e}")
     except Exception as e:
         return error_response(f"นำเข้าล้มเหลว: {type(e).__name__}: {e}", status=500)
+
+    # นำเข้าสำเร็จ -> ข้อมูลทุกคอลัมน์ของไฟล์ (ไม่ใช่แค่ 12 คอลัมน์ที่ระบบใช้คำนวณ) ถูกเก็บไว้ครบใน
+    # po_import.column_order + po_line.all_values แล้ว (ดู po_parser.py's parse_po_file) ไม่จำเป็นต้อง
+    # เก็บไฟล์ต้นฉบับไว้บนดิสก์อีกต่อไปเลย — ดาวน์โหลดย้อนหลังทีหลัง จะสร้างไฟล์ใหม่จากข้อมูลใน DB แทน
+    # (ดู po_regenerator.py) ทดสอบยืนยันแล้วว่าตรงกับต้นฉบับทุกเซลล์ 100%
+    if os.path.exists(saved_path):
+        os.remove(saved_path)
 
     unknown_locations = check_unknown_locations(po_import_id)
     if unknown_locations:
@@ -273,9 +285,9 @@ def buffer_form(request):
     import openpyxl
 
     from customers.cpall.logic.logistic_plan_export import (
-        GROUP_TEMPLATES,
         _find_line_no_column,
         _find_sku_header_rows,
+        get_group_templates,
         read_buffer_qty_from_template,
     )
     from customers.cpall.models import SkuMaster
@@ -286,8 +298,13 @@ def buffer_form(request):
         return render(request, "cpall/plan_error.html", {"error": "ไม่พบรอบ PO ที่เลือกไว้"})
 
     # กรอกยอดเผื่อเฉพาะ SKU ที่มีอยู่ในเทมเพลต "รอบเช้าต่างจังหวัด" เท่านั้น (18 ตัว ไม่ใช่ทั้ง 19)
-    # เพราะยอดเผื่อผูกกับกลุ่มนี้กลุ่มเดียวในทางปฏิบัติ (ดูเหตุผลใน README)
-    template_path, sheet_name = GROUP_TEMPLATES["รอบเช้าต่างจังหวัด"]
+    # เพราะยอดเผื่อผูกกับกลุ่มนี้กลุ่มเดียวในทางปฏิบัติ (ดูเหตุผลใน README) — ชื่อกลุ่มนี้ hardcode ไว้
+    # ตรงนี้โดยตั้งใจ (business logic เฉพาะกลุ่มนี้กลุ่มเดียว ไม่ใช่พฤติกรรมทั่วไปของทุกกลุ่ม)
+    group_templates = get_group_templates()
+    if "รอบเช้าต่างจังหวัด" not in group_templates:
+        return render(request, "cpall/plan_error.html",
+                       {"error": "ไม่พบกลุ่ม 'รอบเช้าต่างจังหวัด' (ถูกปิดใช้งานหรือลบไปแล้ว) — ฟีเจอร์ยอดเผื่อผูกกับกลุ่มนี้โดยเฉพาะ"})
+    template_path, sheet_name = group_templates["รอบเช้าต่างจังหวัด"]
     wb = openpyxl.load_workbook(template_path)
     ws = wb[sheet_name]
     line_no_col, header_row = _find_line_no_column(ws)
@@ -356,11 +373,26 @@ def buffer_form_submit(request):
     return redirect("cpall:view_plan", plan_run_id=result["plan_run_id"])
 
 
+def _set_download_filename(response, filename):
+    """
+    ตั้งชื่อไฟล์ดาวน์โหลดแบบรองรับภาษาไทยให้ถูกต้องตามมาตรฐาน RFC 6266 (filename*=UTF-8''...)
+    ไม่ใช้ resp["Content-Disposition"] = f'...filename="{filename}"...' ตรงๆ เพราะ Django จะ auto-encode
+    ทั้ง header เป็น MIME encoded-word แบบเก่า (=?utf-8?b?...?=) ทันทีที่เจอตัวอักษรที่ไม่ใช่ ASCII —
+    ซึ่งเป็นมาตรฐานสำหรับ email header ไม่ใช่ HTTP header บางเบราว์เซอร์/ตัวจัดการดาวน์โหลด parse ผิด
+    แล้ว fallback ไปใช้ชื่อ "download" เฉยๆ (ตรงกับปัญหาที่เจอจริง) — เข้ารหัสเองแบบ RFC 6266 แทน พร้อม
+    ชื่อสำรอง ASCII ควบคู่กันไปด้วย เผื่อเบราว์เซอร์เก่ามากๆ ไม่รู้จัก filename*= เลย (นามสกุลของชื่อ
+    สำรองต้องตรงกับไฟล์จริงเสมอ — ไม่ hardcode .xlsx เพราะไฟล์นี้อาจเป็น .zip ก็ได้)
+    """
+    ext = os.path.splitext(filename)[1] or ".xlsx"
+    encoded = quote(filename)
+    response["Content-Disposition"] = f"attachment; filename=\"download{ext}\"; filename*=UTF-8''{encoded}"
+
+
 def view_plan(request, plan_run_id):
     detail = get_plan_run_detail(plan_run_id)
     if detail is None:
         return render(request, "cpall/plan_not_found.html", {"plan_run_id": plan_run_id}, status=404)
-    plan_name = PlanRun.objects.get(id=plan_run_id).get_display_name()
+    plan_name = PlanRun.objects.get(id=plan_run_id).get_short_label()
     return render(request, "cpall/plan_view.html", {"plan": detail, "plan_name": plan_name})
 
 
@@ -368,7 +400,7 @@ def download_production(request, plan_run_id):
     detail = get_plan_run_detail(plan_run_id)
     if detail is None or not detail["production_plan_path"]:
         raise Http404
-    plan_name = PlanRun.objects.get(id=plan_run_id).get_display_name()
+    filename = f"{PlanRun.objects.get(id=plan_run_id).get_display_name(prefix='แพลน')}.xlsx"
 
     # ลองสร้างไฟล์ใหม่จากข้อมูลดิบก่อนเสมอ (มีสูตรจริงครบ ตรงกับที่ตกลงกันไว้) — ถ้าทำไม่ได้ (แผนเก่า
     # ก่อนมีระบบ data-first) fallback ไปเสิร์ฟไฟล์ที่เก็บไว้บนดิสก์แบบเดิม (ยังไม่ได้ลบไฟล์เก่าทิ้งในเฟสนี้)
@@ -378,13 +410,15 @@ def download_production(request, plan_run_id):
             content,
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        response["Content-Disposition"] = f'attachment; filename="{plan_name}.xlsx"'
+        _set_download_filename(response, filename)
         return response
     except PlanRegenerateError:
         pass
 
-    return FileResponse(open(detail["production_plan_path"], "rb"), as_attachment=True,
-                         filename=f"{plan_name}.xlsx")
+    response = FileResponse(open(detail["production_plan_path"], "rb"),
+                             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    _set_download_filename(response, filename)
+    return response
 
 
 def download_logistic(request, plan_run_id, group_name):
@@ -394,8 +428,7 @@ def download_logistic(request, plan_run_id, group_name):
     match = next((lp for lp in detail["logistic_plans"] if lp["group_name"] == group_name), None)
     if match is None or not match["file_path"]:
         raise Http404
-    plan_name = PlanRun.objects.get(id=plan_run_id).get_display_name()
-    filename = f"{group_name}_{plan_name}.xlsx"
+    filename = f"{PlanRun.objects.get(id=plan_run_id).get_display_name(prefix=group_name)}.xlsx"
 
     try:
         content = regenerate_logistic_plan_bytes(plan_run_id, group_name)
@@ -403,12 +436,92 @@ def download_logistic(request, plan_run_id, group_name):
             content,
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        _set_download_filename(response, filename)
         return response
     except PlanRegenerateError:
         pass
 
-    return FileResponse(open(match["file_path"], "rb"), as_attachment=True, filename=filename)
+    response = FileResponse(open(match["file_path"], "rb"),
+                             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    _set_download_filename(response, filename)
+    return response
+
+
+def view_po_detail(request, po_import_id):
+    detail = get_po_detail(po_import_id)
+    if detail is None:
+        raise Http404
+    return render(request, "cpall/po_detail.html", {"po": detail})
+
+
+def download_po(request, po_import_id):
+    """สร้างไฟล์ PO ใหม่จากข้อมูลใน database (ครบทุกคอลัมน์เหมือนต้นฉบับ ทดสอบยืนยันตรงกันทุกเซลล์)
+    — ไม่ได้เก็บไฟล์ต้นฉบับไว้ถาวรอีกต่อไป แต่ถ้าเป็น PO เก่าที่ยังมีไฟล์ค้างอยู่จากก่อนเปลี่ยนมาใช้
+    ระบบนี้ ให้เสิร์ฟไฟล์เดิมนั้นตรงๆ ก่อน (ของจริงย่อมดีกว่าของสร้างใหม่เสมอถ้ามีอยู่จริง)"""
+    detail = get_po_detail(po_import_id)
+    if detail is None:
+        raise Http404
+
+    source_path = detail["source_filename"]
+    if source_path and os.path.exists(source_path):
+        response = FileResponse(
+            open(source_path, "rb"),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        _set_download_filename(response, detail["display_filename"])
+        return response
+
+    try:
+        content = regenerate_po_file_bytes(po_import_id)
+    except PORegenerateError:
+        raise Http404
+    response = HttpResponse(
+        content, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    _set_download_filename(response, detail["display_filename"])
+    return response
+
+
+def download_all_zip(request, plan_run_id):
+    """โหลดทั้งแผน (Production Plan + Logistic Plan ทุกกลุ่มที่สำเร็จ) รวมเป็นไฟล์ ZIP เดียว —
+    ใช้ตัวสร้างไฟล์เดียวกับการโหลดทีละไฟล์ทุกอย่าง (มีสูตรจริงครบเหมือนกัน) แค่รวมเข้า zip ในหน่วยความจำ
+    ไม่ผ่านไฟล์ชั่วคราวบนดิสก์เลย (เหมือน pattern ที่ใช้กับการโหลดทีละไฟล์)"""
+    detail = get_plan_run_detail(plan_run_id)
+    if detail is None:
+        raise Http404
+    plan = PlanRun.objects.get(id=plan_run_id)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        if detail["production_plan_status"] == "success":
+            try:
+                content = regenerate_production_plan_bytes(plan_run_id)
+            except PlanRegenerateError:
+                content = None
+                if detail["production_plan_path"] and os.path.exists(detail["production_plan_path"]):
+                    with open(detail["production_plan_path"], "rb") as f:
+                        content = f.read()
+            if content:
+                zf.writestr(f"{plan.get_display_name(prefix='แพลน')}.xlsx", content)
+
+        for lp in detail["logistic_plans"]:
+            if lp["status"] != "success":
+                continue
+            try:
+                content = regenerate_logistic_plan_bytes(plan_run_id, lp["group_name"])
+            except PlanRegenerateError:
+                content = None
+                if lp["file_path"] and os.path.exists(lp["file_path"]):
+                    with open(lp["file_path"], "rb") as f:
+                        content = f.read()
+            if content:
+                zf.writestr(f"{plan.get_display_name(prefix=lp['group_name'])}.xlsx", content)
+
+    buffer.seek(0)
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    zip_filename = f"{plan.get_display_name(prefix='แพลนทั้งหมด')}.zip"
+    _set_download_filename(response, zip_filename)
+    return response
 
 
 # ---------- จัดการ Template (ดาวน์โหลด/อัปโหลด/ดูประวัติเวอร์ชัน/กู้คืน/ลบ) ----------
@@ -419,9 +532,10 @@ def template_list(request):
 
 
 def template_download(request, key):
-    if key not in TEMPLATE_REGISTRY:
+    registry = get_template_registry()
+    if key not in registry:
         raise Http404
-    path = TEMPLATE_REGISTRY[key]["path"]
+    path = registry[key]["path"]
     if not os.path.exists(path):
         raise Http404
     return FileResponse(open(path, "rb"), as_attachment=True, filename=os.path.basename(path))
@@ -430,7 +544,8 @@ def template_download(request, key):
 def template_upload(request, key):
     if request.method != "POST":
         return redirect("cpall:template_list")
-    if key not in TEMPLATE_REGISTRY:
+    registry = get_template_registry()
+    if key not in registry:
         raise Http404
 
     is_htmx = request.headers.get("HX-Request") == "true"
@@ -441,7 +556,7 @@ def template_upload(request, key):
             response["HX-Trigger"] = json.dumps({"toast": {"message": message, "level": "error"}})
             return response
         return render(request, "cpall/template_upload_result.html",
-                       {"success": False, "error": message, "key": key, "label": TEMPLATE_REGISTRY[key]["label"]})
+                       {"success": False, "error": message, "key": key, "label": registry[key]["label"]})
 
     form = TemplateUploadForm(request.POST, request.FILES)
     if not form.is_valid():
@@ -456,7 +571,7 @@ def template_upload(request, key):
             f.write(chunk)
 
     try:
-        upload_new_version(key, temp_path)
+        upload_new_version(key, temp_path, original_filename=new_file.name)
     except TemplateValidationError as e:
         # validate ไม่ผ่าน -> เวอร์ชัน/ไฟล์ live เดิมไม่ถูกแตะเลย ลบไฟล์ที่อัปโหลดมาทิ้ง
         if os.path.exists(temp_path):
@@ -474,18 +589,19 @@ def template_upload(request, key):
 
 def template_versions(request, key):
     """หน้าประวัติทุกเวอร์ชันของ template นี้ — กู้คืน/ลบได้จากหน้านี้"""
-    if key not in TEMPLATE_REGISTRY:
+    registry = get_template_registry()
+    if key not in registry:
         raise Http404
     versions = list_versions(key)
     return render(request, "cpall/template_versions.html", {
-        "key": key, "label": TEMPLATE_REGISTRY[key]["label"], "versions": versions,
+        "key": key, "label": registry[key]["label"], "versions": versions,
     })
 
 
 def template_version_restore(request, key, version_id):
     if request.method != "POST":
         return redirect("cpall:template_versions", key=key)
-    if key not in TEMPLATE_REGISTRY:
+    if key not in get_template_registry():
         raise Http404
     is_htmx = request.headers.get("HX-Request") == "true"
     try:
@@ -507,7 +623,8 @@ def template_version_restore(request, key, version_id):
 def template_version_delete(request, key, version_id):
     if request.method != "POST":
         return redirect("cpall:template_versions", key=key)
-    if key not in TEMPLATE_REGISTRY:
+    registry = get_template_registry()
+    if key not in registry:
         raise Http404
     is_htmx = request.headers.get("HX-Request") == "true"
     try:
@@ -518,7 +635,7 @@ def template_version_delete(request, key, version_id):
         if not is_htmx:
             versions = list_versions(key)
             return render(request, "cpall/template_versions.html", {
-                "key": key, "label": TEMPLATE_REGISTRY[key]["label"], "versions": versions, "error": str(e),
+                "key": key, "label": registry[key]["label"], "versions": versions, "error": str(e),
             })
 
     versions = list_versions(key)
@@ -527,7 +644,7 @@ def template_version_delete(request, key, version_id):
         response["HX-Trigger"] = json.dumps({"toast": toast})
         return response
     return render(request, "cpall/template_versions.html", {
-        "key": key, "label": TEMPLATE_REGISTRY[key]["label"], "versions": versions,
+        "key": key, "label": registry[key]["label"], "versions": versions,
     })
 
 
@@ -568,8 +685,25 @@ def view_logistic_table(request, plan_run_id, group_name):
             {"qty": row["qty_by_column"].get(col), "pack_text": row["pack_text_by_column"].get(col)}
             for col in table["columns"]
         ]
-    return render(request, "cpall/table_logistic.html",
-                  {"plan": detail, "table": table, "group_name": group_name})
+    total_baskets = sum(row["basket_total"] or 0 for row in table["rows"])
+
+    # เลข PO จริงเบื้องหลัง "PO1"/"PO2" แต่ละคอลัมน์ — เอาไว้แสดง tooltip เฉยๆ ถ้าหาไม่ได้ (เช่น PO
+    # ต้นทางถูกลบไปแล้ว) ไม่ให้กระทบหน้าตารางเลย แค่ไม่มี tooltip ให้
+    from customers.cpall.logic.logistic_plan_export import get_po_number_by_column_label
+
+    po_import_ids = [po["id"] for po in detail["po_imports"]]
+    try:
+        po_number_by_column = get_po_number_by_column_label(po_import_ids, group_name)
+    except Exception:
+        po_number_by_column = {}
+    # เตรียมคู่ (คอลัมน์, เลข PO) ไว้ล่วงหน้า — Django template lookup แบบ dict.{{ loop_var }} หา
+    # key ชื่อ "loop_var" ตรงๆ ไม่ resolve ค่าตัวแปรให้ ต้องจับคู่มาก่อนแบบนี้แทน
+    columns_with_po = [(col, po_number_by_column.get(col)) for col in table["columns"]]
+
+    return render(request, "cpall/table_logistic.html", {
+        "plan": detail, "table": table, "group_name": group_name, "total_baskets": total_baskets,
+        "columns_with_po": columns_with_po,
+    })
 
 
 # ---------- ลบ PO / ลบแผน ----------
@@ -608,7 +742,7 @@ def delete_plan_run_view(request, plan_run_id):
 
 
 def template_view(request, key):
-    if key not in TEMPLATE_REGISTRY:
+    if key not in get_template_registry():
         raise Http404
     sheet_name = request.GET.get("sheet")
     try:

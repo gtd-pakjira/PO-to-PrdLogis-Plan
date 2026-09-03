@@ -27,10 +27,8 @@ def save_location_mapping(fc_code: str, name_th: str, group: str, sub_location: 
     """บันทึก mapping ใหม่ 1 รายการ ทั้งใน Postgres และไฟล์ YAML (ดูเหตุผลใน docstring บนสุดของไฟล์)"""
     customer_id = get_cpall_customer_id()
     LocationMapping.objects.update_or_create(
-        fc_code=fc_code,
-        defaults={
-            "customer_id": customer_id, "name_th": name_th, "group": group, "sub_location": sub_location,
-        },
+        customer_id=customer_id, fc_code=fc_code,
+        defaults={"name_th": name_th, "group": group, "sub_location": sub_location},
     )
     _append_to_yaml(fc_code, name_th, group, sub_location)
 

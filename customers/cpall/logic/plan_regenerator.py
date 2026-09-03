@@ -21,10 +21,10 @@ from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
 from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
 from customers.cpall.logic.grouping import get_dates_by_sub_location
 from customers.cpall.logic.logistic_plan_export import (
-    GROUP_TEMPLATES,
     _find_column_labels,
     _find_line_no_column,
     _find_qty_column_range,
+    get_group_templates,
 )
 from customers.cpall.logic.logistic_plan_export import _find_sku_header_rows as _find_lp_sku_header_rows
 
@@ -124,7 +124,7 @@ def regenerate_logistic_plan_bytes(plan_run_id: int, group_name: str) -> bytes:
         entry[r.column_label] = r.qty
 
     wb = openpyxl.load_workbook(logistic_file.template_version.file_path)
-    _, sheet_name = GROUP_TEMPLATES[group_name]
+    _, sheet_name = get_group_templates()[group_name]
     ws = wb[sheet_name]
 
     line_no_col, header_row = _find_line_no_column(ws)

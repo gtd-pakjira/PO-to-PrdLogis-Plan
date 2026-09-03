@@ -21,9 +21,9 @@ from customers.cpall.logic.db import get_cpall_customer_id
 from customers.cpall.logic.excel_export import ExcelExportError, export_production_plan
 from customers.cpall.logic.grouping import ReconciliationError, reconcile
 from customers.cpall.logic.logistic_plan_export import (
-    GROUP_TEMPLATES,
     LogisticPlanError,
     export_logistic_plan,
+    get_group_templates,
     group_has_data,
 )
 from customers.cpall.models import PlanRun, PlanRunLogisticFile
@@ -40,18 +40,19 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     ถ้า reconcile ผ่านแต่บางไฟล์ (Production Plan หรือ Logistic Plan บางกลุ่ม) ล้มเหลวระหว่างสร้าง
     จะไม่ raise — ใส่สถานะ "failed" ไว้ใน dict ผลลัพธ์แทน (ให้ไฟล์อื่นที่ไม่เกี่ยวข้องสร้างต่อได้)
     """
-    if output_dir is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        output_dir = f"customers/cpall/data/output/{timestamp}"
-    os.makedirs(output_dir, exist_ok=True)
-
     # ---------- ตรวจสอบยอด ----------
+    # เช็คก่อนสร้างโฟลเดอร์เลย — ถ้ายอดไม่ตรง (raise ทันที) จะได้ไม่มีโฟลเดอร์เปล่าค้างอยู่บนดิสก์
     recon = reconcile(po_import_ids)  # raise ReconciliationError ถ้าไม่ผ่าน (ปล่อยให้ผู้เรียนจัดการ)
     if not recon["passed"]:
         raise ReconciliationError(
             f"ยอดไม่ตรงกัน {len(recon['mismatches'])} SKU: "
             + ", ".join(m["barcode"] for m in recon["mismatches"])
         )
+
+    if output_dir is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        output_dir = f"customers/cpall/data/output/{timestamp}"
+    os.makedirs(output_dir, exist_ok=True)
 
     # ---------- Production Plan ----------
     production_plan_path = f"{output_dir}/แพลน_7-11.xlsx"
@@ -63,7 +64,7 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
 
     # ---------- Logistic Plan (แต่ละกลุ่ม อิสระต่อกัน) ----------
     logistic_results = {}
-    for group_name in GROUP_TEMPLATES:
+    for group_name in get_group_templates():
         if not group_has_data(po_import_ids, group_name):
             logistic_results[group_name] = {"status": "skipped", "path": None, "error": None}
             continue
@@ -82,7 +83,24 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     # (Phase 1.6 sub-phase 3) — ทำแยกหลัง save plan_run เสร็จแล้ว ถ้าขั้นตอนนี้ error ไม่ควรทำให้
     # การสร้างแผนทั้งหมดล้มเหลว (ไฟล์ Excel สร้างสำเร็จแล้ว ยังใช้งานได้ปกติ แค่ตาราง data-first
     # จะไม่มีข้อมูลสำหรับแผนนี้ — log ไว้ให้เห็นชัดเจนแทนที่จะทำให้ทั้ง request ล้ม)
-    _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results)
+    extracted_ok = _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results)
+
+    # ---------- ลบไฟล์ Excel ที่ extract ข้อมูลเข้า plan_sku_result สำเร็จแล้วทิ้ง (data-first เต็มรูป
+    # แบบ) — เว็บอ่านจาก DB อยู่แล้ว ดาวน์โหลดก็ regenerate จาก DB+เทมเพลตใหม่ทุกครั้งอยู่แล้ว ไฟล์ที่
+    # เขียนไว้ตอนสร้างแผนไม่มีประโยชน์อะไรอีก — ไฟล์ที่ extract ไม่สำเร็จ (หายาก) เก็บไว้เป็น fallback
+    # ให้ดาวน์โหลดยังใช้งานได้ ไม่ลบทิ้ง
+    if "production" in extracted_ok and production_plan_result["path"]:
+        if os.path.exists(production_plan_result["path"]):
+            os.remove(production_plan_result["path"])
+    for group_name, result in logistic_results.items():
+        if group_name in extracted_ok and result["path"] and os.path.exists(result["path"]):
+            os.remove(result["path"])
+
+    # โฟลเดอร์นี้อาจว่างเปล่าแล้ว (ทุกไฟล์ที่เคยเขียนไว้ถูกลบไปหมด) — ลบทิ้งไปด้วยเลยถ้าว่างจริง กัน
+    # โฟลเดอร์เปล่าค้างสะสมไปเรื่อยๆ (ถ้ายังมีไฟล์เหลืออยู่ — extract ไม่สำเร็จบางไฟล์ — จะไม่ว่าง เลย
+    # ไม่ถูกลบ ปลอดภัย)
+    if os.path.isdir(output_dir) and not os.listdir(output_dir):
+        os.rmdir(output_dir)
 
     return {
         "plan_run_id": plan_run_id,
@@ -94,7 +112,10 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     }
 
 
-def _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results):
+def _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results) -> set:
+    """ดึงผลลัพธ์ (LibreOffice คำนวณจริง) เก็บลง plan_sku_result — คืนค่า set ของไฟล์ที่ extract
+    สำเร็จ ('production' หรือชื่อกลุ่ม) ให้ run_plan() ใช้ตัดสินใจว่าจะลบไฟล์ Excel ทิ้งได้ไหม (ไฟล์ที่
+    extract ไม่สำเร็จต้องเก็บไว้เป็น fallback ให้ดาวน์โหลด — ไม่งั้นข้อมูลจะหายไปเลยทั้งสองทาง)"""
     from customers.cpall.logic.plan_result_extractor import (
         extract_logistic_plan_results,
         extract_production_plan_results,
@@ -102,9 +123,12 @@ def _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_
     from customers.cpall.models import PlanSkuResult
 
     all_rows = []
+    extracted_ok = set()
+
     if production_plan_result["status"] == "success" and production_plan_result["path"]:
         try:
             all_rows += extract_production_plan_results(production_plan_result["path"])
+            extracted_ok.add("production")
         except Exception as e:
             print(f"[plan_runner] WARNING: ดึงผลลัพธ์ Production Plan ไม่สำเร็จ (plan_run_id={plan_run_id}): {e}")
 
@@ -112,6 +136,7 @@ def _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_
         if result["status"] == "success" and result["path"]:
             try:
                 all_rows += extract_logistic_plan_results(result["path"], group_name)
+                extracted_ok.add(group_name)
             except Exception as e:
                 print(f"[plan_runner] WARNING: ดึงผลลัพธ์ {group_name} ไม่สำเร็จ (plan_run_id={plan_run_id}): {e}")
 
@@ -120,6 +145,8 @@ def _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_
             PlanSkuResult(plan_run_id=plan_run_id, **row) for row in all_rows
         ])
         print(f"[plan_runner] บันทึกผลลัพธ์ลง plan_sku_result แล้ว {len(all_rows)} แถว (plan_run_id={plan_run_id})")
+
+    return extracted_ok
 
 
 def _save_plan_run(po_import_ids, output_dir, production_plan_result, logistic_results) -> int:
@@ -221,7 +248,8 @@ def get_plan_run_detail(plan_run_id: int) -> dict | None:
         "production_plan_error": plan_run.production_plan_error,
     }
     result["po_imports"] = [
-        {"id": pi.id, "source_filename": pi.source_filename, "production_date": pi.production_date,
+        {"id": pi.id, "source_filename": pi.source_filename,
+         "display_filename": os.path.basename(pi.source_filename), "production_date": pi.production_date,
          "po_date": pi.po_date}
         for pi in plan_run.po_imports.all()
     ]

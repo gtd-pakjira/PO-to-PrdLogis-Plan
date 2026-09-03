@@ -22,6 +22,9 @@ services:
       POSTGRES_DB: gtd_poc
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"    # เปิดให้โปรแกรมนอก container ต่อได้ตรงๆ (เช่น DBeaver) — พอร์ตนี้อยู่ใน
+                        # forwardPorts ของ devcontainer.json อยู่แล้ว แต่ใส่ตรงนี้ด้วยให้ชัวร์ 100%
     volumes:
       - pgdata:/var/lib/postgresql/data
 

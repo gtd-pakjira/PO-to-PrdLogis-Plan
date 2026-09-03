@@ -8,7 +8,7 @@ Admin แก้ไฟล์ Template เองบ่อย (เพิ่มค�
   2. เก็บทุกเวอร์ชันที่เคยอัปโหลดไว้ถาวร (ไม่ใช่แค่ backup 1 ชั้นแบบเดิม) — กู้คืนไปเวอร์ชันไหนก็ได้
      ในประวัติ ลบเวอร์ชันเก่าได้ (ถ้าไม่ใช่เวอร์ชันสุดท้ายที่เหลือ และไม่มีแผนไหนอ้างอิงอยู่)
 
-*** สถาปัตยกรรม: ยังมี "ไฟล์ live" ที่ path ตายตัวเดิม (TEMPLATE_REGISTRY[key]["path"]) ***
+*** สถาปัตยกรรม: ยังมี "ไฟล์ live" ที่ path ตายตัวเดิม (get_template_registry()[key]["path"]) ***
 excel_export.py / logistic_plan_export.py อ่านจาก path ตายตัวนี้เสมอ (ไม่ได้แก้ให้รู้จัก versioning
 โดยตรง) — ทุกครั้งที่เปลี่ยนเวอร์ชัน active (อัปโหลดใหม่/กู้คืน) จะ sync ไฟล์ที่ path ตายตัวนี้ให้ตรงกับ
 เวอร์ชัน active เสมอ วิธีนี้ทำให้โค้ดเดิมที่มีอยู่แล้วทำงานถูกต้องต่อไปโดยไม่ต้องแก้เลย
@@ -25,9 +25,9 @@ from customers.cpall.logic.excel_export import TEMPLATE_PATH as PP_TEMPLATE_PATH
 from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
 from customers.cpall.logic.excel_export import _find_sub_location_columns, _find_total_column
 from customers.cpall.logic.logistic_plan_export import (
-    GROUP_TEMPLATES,
     _find_line_no_column,
     _find_qty_column_range,
+    get_group_templates,
 )
 from customers.cpall.logic.logistic_plan_export import _find_sku_header_rows as _find_lp_sku_header_rows
 
@@ -43,7 +43,13 @@ class TemplateInUseError(Exception):
     pass
 
 
-def _build_registry():
+def get_template_registry() -> dict:
+    """
+    สร้าง registry ของ Template ทั้งหมด (Production Plan + Logistic Plan ทุกกลุ่ม) — query กลุ่มพื้นที่
+    สดจาก database ทุกครั้ง (ผ่าน get_group_templates()) แทนที่จะ build ครั้งเดียวตอน import module
+    เหมือนเดิม (TEMPLATE_REGISTRY เคยเป็น module-level constant) — เพิ่ม/ปิดใช้งานกลุ่มพื้นที่ผ่าน
+    หน้าเว็บแล้วเห็นผลทันที ไม่ต้อง restart เซิร์ฟเวอร์
+    """
     registry = {
         "production_plan": {
             "path": PP_TEMPLATE_PATH,
@@ -51,8 +57,7 @@ def _build_registry():
             "kind": "production",
         }
     }
-    for group_name in GROUP_TEMPLATES:
-        path, _ = GROUP_TEMPLATES[group_name]
+    for group_name, (path, _) in get_group_templates().items():
         registry[f"logistic_{group_name}"] = {
             "path": path,
             "label": f"Logistic Plan — {group_name}",
@@ -60,9 +65,6 @@ def _build_registry():
             "group": group_name,
         }
     return registry
-
-
-TEMPLATE_REGISTRY = _build_registry()
 
 
 def get_template_grid(key: str, sheet_name: str = None, max_rows: int = 120, max_cols: int = 25) -> dict:
@@ -74,10 +76,11 @@ def get_template_grid(key: str, sheet_name: str = None, max_rows: int = 120, max
     sheet_name: ถ้าไม่ระบุ ใช้ชีตหลักของ template นี้ (ตามที่ลงทะเบียนไว้) — ไฟล์เดียวอาจมีหลายชีต
     (เช่น ชีต "-รถ"/"คันที่ 1/2" ที่เกี่ยวกับจัดรถ) เลือกดูชีตอื่นได้ผ่าน sheet_name
     """
-    if key not in TEMPLATE_REGISTRY:
+    registry = get_template_registry()
+    if key not in registry:
         raise TemplateValidationError(f"ไม่รู้จัก template '{key}'")
 
-    info = TEMPLATE_REGISTRY[key]
+    info = registry[key]
     path = info["path"]
     if not os.path.exists(path):
         raise TemplateValidationError(f"ไม่พบไฟล์ {path}")
@@ -87,7 +90,7 @@ def get_template_grid(key: str, sheet_name: str = None, max_rows: int = 120, max
     if info["kind"] == "production":
         default_sheet = PP_SHEET_NAME
     else:
-        _, default_sheet = GROUP_TEMPLATES[info["group"]]
+        _, default_sheet = get_group_templates()[info["group"]]
 
     if sheet_name is None or sheet_name not in wb.sheetnames:
         sheet_name = default_sheet if default_sheet in wb.sheetnames else wb.sheetnames[0]
@@ -121,10 +124,11 @@ def validate_template(key: str, filepath: str) -> dict:
     ตรวจสอบโครงสร้างไฟล์ Template ที่อัปโหลดมา
     raise TemplateValidationError พร้อมเหตุผลชัดเจนถ้าไม่ผ่าน คืนค่าสรุปข้อมูลถ้าผ่าน (ไว้โชว์ผู้ใช้)
     """
-    if key not in TEMPLATE_REGISTRY:
+    registry = get_template_registry()
+    if key not in registry:
         raise TemplateValidationError(f"ไม่รู้จัก template '{key}'")
 
-    info = TEMPLATE_REGISTRY[key]
+    info = registry[key]
     try:
         wb = openpyxl.load_workbook(filepath)
     except Exception as e:
@@ -154,7 +158,7 @@ def validate_template(key: str, filepath: str) -> dict:
 
     else:  # logistic
         group_name = info["group"]
-        _, sheet_name = GROUP_TEMPLATES[group_name]
+        _, sheet_name = get_group_templates()[group_name]
         if sheet_name not in wb.sheetnames:
             raise TemplateValidationError(
                 f"ไม่พบชีตชื่อ '{sheet_name}' ในไฟล์ — เช็คว่าไม่ได้เปลี่ยนชื่อชีตตอนแก้ไฟล์"
@@ -181,7 +185,7 @@ def _version_file_path(key: str, version_number: int) -> str:
 
 def _sync_live_file(key: str, version):
     """คัดลอกไฟล์ของเวอร์ชันที่ระบุไปทับไฟล์ live ที่ path ตายตัว — ให้โค้ดเดิมอ่านถูกเวอร์ชันเสมอ"""
-    shutil.copy2(version.file_path, TEMPLATE_REGISTRY[key]["path"])
+    shutil.copy2(version.file_path, get_template_registry()[key]["path"])
 
 
 def _ensure_initial_version(key: str):
@@ -194,7 +198,7 @@ def _ensure_initial_version(key: str):
     if TemplateVersion.objects.filter(template_key=key).exists():
         return
 
-    target_path = TEMPLATE_REGISTRY[key]["path"]
+    target_path = get_template_registry()[key]["path"]
     if not os.path.exists(target_path):
         return  # ไม่มีไฟล์ live เลย ไม่มีอะไรให้สร้างเป็นเวอร์ชันแรก
 
@@ -219,7 +223,7 @@ def list_templates() -> list[dict]:
     from customers.cpall.models import TemplateVersion
 
     result = []
-    for key, info in TEMPLATE_REGISTRY.items():
+    for key, info in get_template_registry().items():
         _ensure_initial_version(key)
         active = TemplateVersion.objects.filter(template_key=key, is_active=True).first()
         total_versions = TemplateVersion.objects.filter(template_key=key).count()
@@ -242,18 +246,20 @@ def list_versions(key: str) -> list[dict]:
     versions = TemplateVersion.objects.filter(template_key=key).order_by("-version_number")
     return [
         {"id": v.id, "version_number": v.version_number, "is_active": v.is_active,
-         "uploaded_at": v.uploaded_at, "validation_summary": v.validation_summary}
+         "uploaded_at": v.uploaded_at, "validation_summary": v.validation_summary,
+         "original_filename": v.original_filename}
         for v in versions
     ]
 
 
-def upload_new_version(key: str, new_filepath: str) -> dict:
+def upload_new_version(key: str, new_filepath: str, original_filename: str = None) -> dict:
     """
     ตรวจสอบไฟล์ใหม่ก่อน (validate_template) แล้วสร้างเป็นเวอร์ชันใหม่ + ตั้งเป็น active ทันที
     เวอร์ชันเก่าไม่ได้ถูกลบเลย แค่ไม่ active แล้ว (กู้คืนได้เสมอผ่าน restore_to_version)
     ถ้า validate ไม่ผ่าน จะ raise ทันที ไม่แตะเวอร์ชัน/ไฟล์ live เดิมเลย
+    original_filename: ชื่อไฟล์ตอน Admin เลือกอัปโหลดจริง (เก็บไว้ให้ดูย้อนหลังในหน้าประวัติเวอร์ชัน)
     """
-    if key not in TEMPLATE_REGISTRY:
+    if key not in get_template_registry():
         raise TemplateValidationError(f"ไม่รู้จัก template '{key}'")
 
     validation_result = validate_template(key, new_filepath)
@@ -271,7 +277,7 @@ def upload_new_version(key: str, new_filepath: str) -> dict:
     TemplateVersion.objects.filter(template_key=key, is_active=True).update(is_active=False)
     new_version = TemplateVersion.objects.create(
         customer_id=get_cpall_customer_id(), template_key=key, version_number=next_version,
-        file_path=version_path, is_active=True,
+        file_path=version_path, original_filename=original_filename, is_active=True,
         validation_summary=f"sku_count={validation_result.get('sku_count')}",
     )
     _sync_live_file(key, new_version)

@@ -3,10 +3,16 @@
 {% block title %}แผน #{{ plan.id }} — แพลนผลิต 7-11{% endblock %}
 {% block content %}
 
-<div class="mb-6">
-    <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
-    <h1 class="text-xl font-semibold text-stone-900 mt-1">แผน #{{ plan.id }}</h1>
-    <p class="text-sm text-stone-500 mt-1 mono">{{ plan_name }}</p>
+<div class="mb-6 flex items-start justify-between gap-3">
+    <div>
+        <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
+        <h1 class="text-xl font-semibold text-stone-900 mt-1">{{ plan_name }}</h1>
+    </div>
+    <a href="{% url 'cpall:download_all_zip' plan.id %}"
+       class="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-stone-800 px-3.5 py-2 text-sm font-medium text-white hover:bg-stone-900 transition mt-6">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+        โหลดทั้งแผน (ZIP)
+    </a>
 </div>
 
 <div class="mb-6">
@@ -14,7 +20,7 @@
     <div class="flex flex-wrap gap-2">
         {% for po in plan.po_imports %}
         <span class="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-xs text-stone-700">
-            {{ po.source_filename }}
+            {{ po.display_filename }}
             <span class="text-stone-400">
                 ({{ po.production_date|date:"d/m" }} &rarr; {{ po.po_date|date:"d/m" }})
             </span>

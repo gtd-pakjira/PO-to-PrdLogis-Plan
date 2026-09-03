@@ -1,0 +1,79 @@
+{% load i18n static admin_urls admin_kubi_tags %}
+
+
+<nav class="sidebar text-light">
+  <nav class="navbar navbar-dark">
+    <button class="navbar-toggler rounded-0" type="button" data-bs-toggle="sidebar" aria-controls="navbarToggleExternalContent" aria-expanded="false" aria-label="{% trans 'Toggle navigation' %}">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+  </nav>
+
+  <div class="branding p-2">
+    <a href="/admin" class="brand-logo" tabindex="-1">
+      {% include 'admin/logo.svg' only %}
+    </a>
+    <span class="fs-5">Admin</span>
+  </div>
+
+  <div class="menu-container mt-2 mb-2">
+    <div class="menu">
+      {% admin_menu %}
+    </div>
+  </div>
+
+  <div class="p-2">
+    <a href="/" class="text-light text-decoration-none d-flex align-items-center gap-2 px-2 py-1 opacity-75"
+       style="font-size: 0.875rem;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+        <path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>
+      </svg>
+      กลับหน้า Portal
+    </a>
+  </div>
+
+  <div class="identity p-2">
+    {{ user|user_avatar }}
+    <div class="user">
+      <strong>{% filter force_escape %}{{ user|user_short_name }}{% endfilter %}</strong>
+      {% if user.is_active and user.is_staff %}
+        <div class="dropdown">
+          <button type="button" class="dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-haspopup="true" aria-expanded="false">
+            {% filter force_escape %}{{ user|user_type }}{% endfilter %}
+          </button>
+          <div class="dropdown-menu dropdown-menu-dark">
+            <div class="px-3 py-1">
+
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="themeSwitch" value="dark">
+                <label class="form-check-label pt-1" for="themeSwitch">
+                  {% translate 'Dark Mode' %}
+                  <svg class="bi ms-2 opacity-50 theme-icon"><use href="#moon-stars-fill"></use></svg>
+                </label>
+              </div>
+
+            </div>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" href="{% if user.has_usable_password %}{% url user|user_admin_urlname:'change' user.pk|admin_urlquote %}{% else %}#{% endif %}"><i class="fa fa-pencil-alt"></i> {% trans 'Manage Account' %}</a>
+            {% block userlinks %}
+              {% url 'two_factor:profile' as two_factor_url %}
+              {% if two_factor_url %}
+                <a class="dropdown-item" href="{{ two_factor_url }}"><i class="fa fa-lock"></i> {% trans 'Account Security' %}</a>
+              {% endif %}
+              {% if user.has_usable_password %}
+                <a class="dropdown-item" href="{% url 'admin:password_change' %}"><i class="fa fa-key"></i> {% trans 'Change password' %}</a>
+              {% endif %}
+              <div class="dropdown-divider"></div>
+              <form id="logout-form" method="post" action="{% url 'admin:logout' %}" class="dropdown-item">
+                {% csrf_token %}
+                <button type="submit" class="link-danger"><i class="fa fa-power-off"></i> {% translate "Log out" %}</button>
+              </form>
+            {% endblock %}
+          </div>
+        </div>
+      {% endif %}
+    </div>
+
+  </div>
+</nav>
+

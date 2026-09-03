@@ -4,7 +4,7 @@
 {% block content %}
 
 <div class="mb-5">
-    <a href="{% url 'cpall:view_plan' plan.id %}" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับหน้าแผน #{{ plan.id }}</a>
+    <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับหน้าแผน #{{ plan.id }}</a>
     <div class="flex items-center justify-between mt-1">
         <h1 class="text-xl font-semibold text-stone-900">{{ group_name }} #{{ plan.id }}</h1>
         <a href="{% url 'cpall:download_logistic' plan.id group_name %}"
@@ -21,7 +21,7 @@
 
 <div class="mb-3 relative max-w-xs">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-    <input type="text" id="sku-search" placeholder="ค้นหา SKU..."
+    <input type="text" id="sku-search" placeholder="ค้นหาสินค้า..."
            class="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600">
 </div>
 
@@ -29,10 +29,14 @@
     <table class="text-sm min-w-full border-separate" style="border-spacing: 0;">
         <thead>
             <tr class="text-left text-stone-500 whitespace-nowrap">
-                <th class="px-3 py-2.5 font-medium sticky left-0 top-0 z-20 bg-stone-50 border-b border-stone-200">SKU</th>
+                <th class="px-3 py-2.5 font-medium sticky left-0 top-0 z-20 bg-stone-50 border-b border-stone-200">สินค้า</th>
                 <th class="px-3 py-2.5 font-medium text-right sticky top-0 z-10 bg-stone-50 border-b border-stone-200">บรรจุ</th>
-                {% for col in table.columns %}
-                <th class="px-3 py-2.5 font-medium text-right sticky top-0 z-10 bg-stone-50 border-b border-stone-200">{{ col }}</th>
+                {% for col, po_num in columns_with_po %}
+                <th class="px-3 py-2.5 font-medium text-right sticky top-0 z-10 bg-stone-50 border-b border-stone-200"
+                    {% if po_num %}title="เลข PO: {{ po_num }}"{% endif %}>
+                    {{ col }}
+                    {% if po_num %}<span class="ml-0.5 text-stone-300 cursor-help" title="เลข PO: {{ po_num }}">ⓘ</span>{% endif %}
+                </th>
                 {% endfor %}
                 <th class="px-3 py-2.5 font-medium text-right sticky top-0 z-10 bg-emerald-50 border-b border-stone-200">ยอดรวม</th>
                 <th class="px-3 py-2.5 font-medium text-right sticky top-0 z-10 bg-stone-50 border-b border-stone-200">รวมตะกร้า</th>
@@ -58,9 +62,15 @@
             </tr>
             {% endfor %}
         </tbody>
+        <tfoot>
+            <tr class="font-medium border-t-2 border-stone-300 bg-stone-50 sticky bottom-0">
+                <td class="px-3 py-2.5 sticky left-0 bg-stone-50" colspan="{{ table.columns|length|add:3 }}">รวมตะกร้าทั้งหมด</td>
+                <td class="px-3 py-2.5 text-right mono text-stone-800">{{ total_baskets }}</td>
+            </tr>
+        </tfoot>
     </table>
 </div>
-<p id="no-match" class="hidden text-sm text-stone-400 text-center py-8">ไม่พบ SKU ที่ค้นหา</p>
+<p id="no-match" class="hidden text-sm text-stone-400 text-center py-8">ไม่พบสินค้าที่ค้นหา</p>
 
 <script>
     const searchInput = document.getElementById('sku-search');
