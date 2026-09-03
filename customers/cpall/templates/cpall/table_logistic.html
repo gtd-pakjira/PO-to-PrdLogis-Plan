@@ -44,7 +44,7 @@
         </thead>
         <tbody class="divide-y divide-stone-100">
             {% for row in table.rows %}
-            <tr class="sku-row hover:bg-emerald-50/40 transition whitespace-nowrap align-top {% cycle 'bg-white' 'bg-stone-50/60' %}"
+            <tr class="sku-row hover:bg-emerald-50 transition whitespace-nowrap align-top {% cycle 'bg-white' 'bg-stone-50' %}"
                 data-search="{{ row.name_th|lower }} {{ row.name_en|lower }}">
                 <td class="px-3 py-2.5 sticky left-0 z-[5] bg-inherit">
                     <p class="text-stone-800">{{ row.name_th }}</p>
@@ -64,8 +64,10 @@
         </tbody>
         <tfoot>
             <tr class="font-medium border-t-2 border-stone-300 bg-stone-50 sticky bottom-0">
-                <td class="px-3 py-2.5 sticky left-0 bg-stone-50" colspan="{{ table.columns|length|add:3 }}">รวมตะกร้าทั้งหมด</td>
-                <td class="px-3 py-2.5 text-right mono text-stone-800">{{ total_baskets }}</td>
+                <td class="px-3 py-2.5 sticky left-0 z-10 bg-stone-50" colspan="2">
+                    รวมตะกร้าทั้งหมด: <span class="mono text-stone-800">{{ total_baskets }}</span>
+                </td>
+                <td colspan="{{ table.columns|length|add:2 }}"></td>
             </tr>
         </tfoot>
     </table>

@@ -18,24 +18,46 @@ CREATE TABLE IF NOT EXISTS customer (
 INSERT INTO customer (code, name_th) VALUES ('cpall', 'CP All (7-11)')
     ON CONFLICT (code) DO NOTHING;
 
+-- เปลี่ยนชื่อตาราง sku_master -> product_master ("SKU" เป็นศัพท์ฝั่งคลังสินค้า ไม่ตรงกับที่ใช้จริง —
+-- เปลี่ยน UI เป็น "รหัสสินค้า/Product Code" ไปแล้ว เปลี่ยนชื่อ table ให้ตรงกันด้วย) — ต้องทำเป็นก้าวแรก
+-- สุด (ก่อน migration/CREATE TABLE อื่นใดทั้งหมด) — migration อื่นๆ ที่เหลือทั้งหมดในไฟล์นี้ (ancient
+-- migration, surrogate key, is_active) เขียนให้ใช้ชื่อ product_master เสมอ โดยยึดว่าขั้นตอนนี้ทำไปแล้ว
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sku_master')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'product_master') THEN
+        ALTER TABLE sku_master RENAME TO product_master;
+    END IF;
+END $$;
+
 -- ============================================================
 -- CPALL — ข้อมูลเฉพาะลูกค้า 7-11 ทั้งหมด (RLS เปิดทุกตาราง)
 -- ============================================================
 
 -- ---------- Config tables (โหลดจาก YAML ตอน seed / sync) ----------
 
-CREATE TABLE IF NOT EXISTS sku_master (
-    id              SERIAL PRIMARY KEY,        -- surrogate key (Django Admin ใช้ composite PK ไม่ได้)
-    customer_id     INTEGER NOT NULL REFERENCES customer(id),
-    barcode         VARCHAR(20) NOT NULL,
-    name_th         TEXT NOT NULL,
-    name_en         TEXT,
-    pack_size       INTEGER NOT NULL,      -- บรรจุ/ตก. (ชิ้นต่อลัง)
-    unit_price      NUMERIC(10,2),         -- ราคาล่าสุด (อ้างอิง — ราคาจริงต่อรอบมาจาก PO)
-    note            TEXT,
-    updated_at      TIMESTAMP DEFAULT now(),
-    UNIQUE (customer_id, barcode)          -- บาร์โค้ดซ้ำกันได้ข้ามลูกค้า (คนละลูกค้า = คนละสินค้า)
-);
+-- ถ้ามีตาราง sku_master เก่าอยู่แล้ว (ยังไม่เคย rename) อย่าเพิ่งสร้าง product_master ใหม่ตรงนี้ —
+-- ปล่อยให้ migration ท้ายไฟล์ (หลัง ancient migration ที่ยังต้องทำงานกับชื่อ sku_master เดิมก่อน)
+-- จัดการ RENAME ให้ก่อน ไม่งั้นจะได้ตารางว่างเปล่าซ้อนกับตารางเก่าที่มีข้อมูลจริง (เจอบั๊กนี้มาแล้ว)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'product_master')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sku_master') THEN
+        CREATE TABLE product_master (
+            id              SERIAL PRIMARY KEY,
+            customer_id     INTEGER NOT NULL REFERENCES customer(id),
+            barcode         VARCHAR(20) NOT NULL,
+            name_th         TEXT NOT NULL,
+            name_en         TEXT,
+            pack_size       INTEGER NOT NULL,
+            unit_price      NUMERIC(10,2),
+            note            TEXT,
+            is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at      TIMESTAMP DEFAULT now(),
+            UNIQUE (customer_id, barcode)
+        );
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS location_mapping (
     id              SERIAL PRIMARY KEY,        -- surrogate key (Django Admin ใช้ composite PK ไม่ได้)
@@ -44,6 +66,7 @@ CREATE TABLE IF NOT EXISTS location_mapping (
     name_th         TEXT NOT NULL,
     "group"         VARCHAR(50) NOT NULL,      -- บางบัวทอง / มหาชัย / สุวรรณภูมิ
     sub_location    VARCHAR(50),
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,  -- ปิดใช้งานจุดส่งที่เลิกใช้แล้วได้ ไม่ต้องลบทิ้ง
     updated_at      TIMESTAMP DEFAULT now(),
     UNIQUE (customer_id, fc_code)          -- รหัสสถานที่ซ้ำกันได้ข้ามลูกค้าเช่นกัน
 );
@@ -189,17 +212,18 @@ ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS production_template_version_id INT
 ALTER TABLE po_import ADD COLUMN IF NOT EXISTS column_order JSONB;
 ALTER TABLE po_line ADD COLUMN IF NOT EXISTS all_values JSONB;
 
--- sku_master/location_mapping: เปลี่ยนจาก composite PK (customer_id, barcode/fc_code) เป็น
+-- product_master/location_mapping: เปลี่ยนจาก composite PK (customer_id, barcode/fc_code) เป็น
 -- surrogate key (id) ต่างหาก — composite PK ใช้กับ Django Admin ไม่ได้ (ข้อจำกัดที่รู้มาตั้งแต่แรก
--- เพิ่งมาแก้ตอนนี้) ไม่กระทบข้อมูลเดิมเลย (แค่เปลี่ยน PK ไม่ได้ลบ/ย้ายอะไร) ปลอดภัย รันซ้ำได้
+-- เพิ่งมาแก้ตอนนี้) ไม่กระทบข้อมูลเดิมเลย (แค่เปลี่ยน PK ไม่ได้ลบ/ย้ายอะไร) ปลอดภัย รันซ้ำได้ —
+-- ใช้ชื่อ product_master เพราะ RENAME (sku_master -> product_master) ทำไปแล้วตอนต้นไฟล์เสมอ
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'sku_master' AND column_name = 'id') THEN
-        ALTER TABLE sku_master ADD COLUMN id SERIAL;
-        ALTER TABLE sku_master DROP CONSTRAINT sku_master_pkey;
-        ALTER TABLE sku_master ADD PRIMARY KEY (id);
-        ALTER TABLE sku_master ADD CONSTRAINT sku_master_customer_barcode_key UNIQUE (customer_id, barcode);
+                    WHERE table_name = 'product_master' AND column_name = 'id') THEN
+        ALTER TABLE product_master ADD COLUMN id SERIAL;
+        ALTER TABLE product_master DROP CONSTRAINT IF EXISTS sku_master_pkey;
+        ALTER TABLE product_master ADD PRIMARY KEY (id);
+        ALTER TABLE product_master ADD CONSTRAINT sku_master_customer_barcode_key UNIQUE (customer_id, barcode);
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
@@ -215,6 +239,11 @@ ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS template_version_id 
 
 CREATE INDEX IF NOT EXISTS idx_plan_run_import_run ON plan_run_import(plan_run_id);
 CREATE INDEX IF NOT EXISTS idx_plan_run_logistic_run ON plan_run_logistic_file(plan_run_id);
+
+-- sku_master/location_mapping: เพิ่ม is_active ให้ปิดใช้งานได้เหมือน logistic_group (สินค้าเลิกขาย/
+-- จุดส่งเลิกใช้ ไม่ต้องลบทิ้ง แค่ปิดไว้) ค่าเดิมทั้งหมดเป็น TRUE อัตโนมัติ ไม่กระทบข้อมูลเดิมเลย
+ALTER TABLE product_master ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE location_mapping ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- ---------- ผลลัพธ์ต่อ SKU/คอลัมน์ (Phase 1.6 sub-phase 2) ----------
 -- "1 แถว = 1 SKU x 1 คอลัมน์" (เช่น "บางบัวทอง" หรือ "ชลบุรี PO2") — เก็บยอดสั่งจริง (ไม่ใช่จากสูตร
@@ -238,10 +267,18 @@ CREATE TABLE IF NOT EXISTS plan_sku_result (
     grand_total     NUMERIC(12,2),
     buffer_qty      NUMERIC(10,2),               -- เฉพาะ production
     return_qty      NUMERIC(10,2),               -- เฉพาะ production, ผลจาก LibreOffice จริง
+    actual_production_qty NUMERIC(10,2),          -- เฉพาะ production — "ยอดที่ต้องผลิตจริง" (แถวรอง
+                                                    -- ใต้ยอดสั่งตาม PO ในเทมเพลต รวมยอดเผื่อ หักลบยอดคืน
+                                                    -- แล้ว) ผลจาก LibreOffice จริง — ไม่ใช่แค่ grand_total
     basket_total    INTEGER                      -- เฉพาะ logistic, ผลจาก LibreOffice จริง
 );
 CREATE INDEX IF NOT EXISTS idx_plan_sku_result_run ON plan_sku_result(plan_run_id);
 CREATE INDEX IF NOT EXISTS idx_plan_sku_result_sheet ON plan_sku_result(plan_run_id, sheet_type, group_name);
+
+-- "ยอดที่ต้องผลิตจริง" — column นี้มีอยู่แล้วในนิยาม CREATE TABLE ด้านบน (fresh install ครบอยู่แล้ว)
+-- บรรทัดนี้แค่เผื่อฐานข้อมูลเก่าที่เคยมีตารางนี้อยู่ก่อนจะเพิ่มคอลัมน์นี้เข้ามา — ต้องอยู่ "หลัง" CREATE
+-- TABLE เสมอ (เจอบั๊กจริง — ตอน fresh install ตารางยังไม่ถูกสร้างเลยตอนบรรทัดนี้รัน ถ้าอยู่ก่อน)
+ALTER TABLE plan_sku_result ADD COLUMN IF NOT EXISTS actual_production_qty NUMERIC(10,2);
 
 -- ============================================================
 -- MIGRATION — สำหรับฐานข้อมูลที่เคยรัน schema.sql เวอร์ชันเก่ามาก่อน (มี sku_master/location_mapping/
@@ -261,15 +298,16 @@ BEGIN
     DROP TABLE IF EXISTS production_plan_line;
     DROP TABLE IF EXISTS production_plan_run;
 
-    -- sku_master: เพิ่ม customer_id, ใส่ค่าเดิมทั้งหมดเป็นของ cpall, เปลี่ยน PK
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sku_master') THEN
+    -- product_master: เพิ่ม customer_id, ใส่ค่าเดิมทั้งหมดเป็นของ cpall, เปลี่ยน PK — ใช้ชื่อ
+    -- product_master เพราะ RENAME (sku_master -> product_master) ทำไปเป็นขั้นแรกสุดแล้วเสมอ
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'product_master') THEN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'sku_master' AND column_name = 'customer_id') THEN
-            ALTER TABLE sku_master ADD COLUMN customer_id INTEGER REFERENCES customer(id);
-            UPDATE sku_master SET customer_id = cpall_id WHERE customer_id IS NULL;
-            ALTER TABLE sku_master ALTER COLUMN customer_id SET NOT NULL;
-            ALTER TABLE sku_master DROP CONSTRAINT IF EXISTS sku_master_pkey;
-            ALTER TABLE sku_master ADD PRIMARY KEY (customer_id, barcode);
+                        WHERE table_name = 'product_master' AND column_name = 'customer_id') THEN
+            ALTER TABLE product_master ADD COLUMN customer_id INTEGER REFERENCES customer(id);
+            UPDATE product_master SET customer_id = cpall_id WHERE customer_id IS NULL;
+            ALTER TABLE product_master ALTER COLUMN customer_id SET NOT NULL;
+            ALTER TABLE product_master DROP CONSTRAINT IF EXISTS sku_master_pkey;
+            ALTER TABLE product_master ADD PRIMARY KEY (customer_id, barcode);
         END IF;
     END IF;
 
@@ -324,10 +362,10 @@ END $$;
 -- DELETE ลืม WHERE customer_id = ... ก็ยังปลอดภัย เพราะ FORCE ROW LEVEL SECURITY บังคับด้วยแม้แต่
 -- เจ้าของตาราง/superuser ก็ไม่ยกเว้น (ปกติ Postgres จะข้าม RLS ให้ table owner โดย default)
 
-ALTER TABLE sku_master ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sku_master FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS customer_isolation ON sku_master;
-CREATE POLICY customer_isolation ON sku_master
+ALTER TABLE product_master ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_master FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS customer_isolation ON product_master;
+CREATE POLICY customer_isolation ON product_master
     USING (customer_id::text = current_setting('app.current_customer_id', true))
     WITH CHECK (customer_id::text = current_setting('app.current_customer_id', true));
 

@@ -1,18 +1,21 @@
 from django.contrib import admin
 
-from .models import LocationMapping, LogisticGroup, SkuMaster
+from .models import LocationMapping, LogisticGroup, ProductMaster
 
 
-@admin.register(SkuMaster)
-class SkuMasterAdmin(admin.ModelAdmin):
-    list_display = ("barcode", "name_th", "pack_size", "unit_price", "updated_at")
+@admin.register(ProductMaster)
+class ProductMasterAdmin(admin.ModelAdmin):
+    list_display = ("barcode", "name_th", "pack_size", "unit_price", "is_active", "updated_at")
+    list_editable = ("is_active",)
+    list_filter = ("is_active",)
     search_fields = ("barcode", "name_th", "name_en")
 
 
 @admin.register(LocationMapping)
 class LocationMappingAdmin(admin.ModelAdmin):
-    list_display = ("fc_code", "name_th", "group", "sub_location", "updated_at")
-    list_filter = ("group",)
+    list_display = ("fc_code", "name_th", "group", "sub_location", "is_active", "updated_at")
+    list_editable = ("is_active",)
+    list_filter = ("group", "is_active")
     search_fields = ("fc_code", "name_th", "sub_location")
 
 

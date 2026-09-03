@@ -16,7 +16,7 @@ import openpyxl
 import pandas as pd
 
 from customers.cpall.logic.db import get_cpall_customer_id
-from customers.cpall.models import LocationMapping, PlanRunImport, PoImport, PoLine
+from customers.cpall.models import LocationMapping, PlanRun, PoImport, PoLine, ProductMaster
 
 # คอลัมน์ที่ต้องมีใน PO Export — ถ้าไม่ครบ ให้หยุดทันที (ตาม FR-1 / UC-1 exception)
 REQUIRED_COLUMNS = [
@@ -205,10 +205,11 @@ def delete_po_import(po_import_id: int):
     เดิมมีไว้เผื่อไฟล์ PO หายไปจากที่เก็บ แต่ตอนนี้ PO เป็น data-first เต็มรูปแบบแล้ว ไม่มีไฟล์ให้หายอีก)
     ถ้า PO นี้ถูกลบไปแล้ว (หาไม่เจอ) ถือว่าลบสำเร็จเงียบๆ ไม่ error — กันเคส race condition/กดซ้ำ
     """
-    used_count = PlanRunImport.objects.filter(po_import_id=po_import_id).count()
-    if used_count > 0:
+    used_plan_runs = PlanRun.objects.filter(planrunimport__po_import_id=po_import_id).distinct()
+    if used_plan_runs.exists():
+        plan_labels = ", ".join(p.get_short_label() for p in used_plan_runs)
         raise POInUseError(
-            f"PO นี้ถูกใช้สร้างแผนไปแล้ว {used_count} แผน — ลบแผนที่ใช้ PO นี้ก่อน ถึงจะลบ PO นี้ได้"
+            f"PO นี้ถูกใช้สร้างแผนไปแล้ว ({plan_labels}) — ลบแผนเหล่านี้ก่อน ถึงจะลบ PO นี้ได้"
         )
 
     try:
@@ -274,6 +275,22 @@ def check_unknown_locations(po_import_id: int) -> list:
         PoLine.objects.filter(po_import_id=po_import_id)
         .exclude(fc_code__in=known_fc_codes)
         .values_list("fc_code", "delivery_location")
+        .distinct()
+    )
+    return list(rows)
+
+
+def check_unknown_skus(po_import_id: int) -> list:
+    """
+    หาบาร์โค้ดในรอบนี้ที่ยังไม่มีใน product_master (เหมือน check_unknown_locations แต่สำหรับสินค้า) —
+    ไม่มีผลต่อการคำนวณแผนเลย (product_master ใช้แค่แสดงชื่อสินค้าที่หน้ากรอกยอดเผื่อ) แต่ยังอยากให้
+    Admin กรอกไว้ให้ครบเพื่อความสมบูรณ์ของข้อมูลอ้างอิง — คืน (barcode, item_name) ต่อบาร์โค้ดที่ไม่รู้จัก
+    """
+    known_barcodes = ProductMaster.objects.values_list("barcode", flat=True)
+    rows = (
+        PoLine.objects.filter(po_import_id=po_import_id)
+        .exclude(barcode__in=known_barcodes)
+        .values_list("barcode", "item_name")
         .distinct()
     )
     return list(rows)

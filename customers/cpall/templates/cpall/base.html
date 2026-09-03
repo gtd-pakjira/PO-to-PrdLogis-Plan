@@ -10,6 +10,9 @@
         /* ซ่อน element นี้ตอนกำลังส่งคำขอ HTMX อยู่ (คู่กับ .htmx-indicator ที่ HTMX เองซ่อนไว้ปกติ
            แล้วโชว์เฉพาะตอนกำลังส่งคำขอ) — ใช้คู่กันสลับ icon ปกติ <-> spinner ระหว่างรอผลลัพธ์ */
         .htmx-request .hx-hide-on-load { display: none !important; }
+        /* Alpine.js ไม่ได้เติม CSS นี้ให้อัตโนมัติ ต้องประกาศเอง — กัน element ที่มี x-cloak
+           กระพริบโชว์ตอน page เพิ่งโหลด ก่อนที่ Alpine.js จะประมวลผล x-show เสร็จ */
+        [x-cloak] { display: none !important; }
     </style>
     <script src="https://unpkg.com/alpinejs@3.14.8" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -85,6 +88,32 @@
         </div>
     </div>
 
+    <!-- Loading overlay — คลุมกลางจอตอนกำลังส่งคำขอ HTMX ที่ใช้เวลานาน (เช่น สร้างแผน ต้องรอ
+         LibreOffice คำนวณสูตรจริง) — ดักฟัง HTMX's global event htmx:beforeRequest/afterRequest เอง
+         (ไม่ผูกกับปุ่มใดปุ่มหนึ่งโดยเฉพาะ ใช้ได้กับทุกจุดในเว็บอัตโนมัติ) หน่วงเวลา 250ms ก่อนโชว์
+         กัน request เร็วๆ (เช่น ค้นหาในตาราง) กระพริบจอโดยไม่จำเป็น และ "afterRequest" ยกเลิก timer
+         เสมอไม่ว่า request จะสำเร็จ/ล้มเหลว กันเคส "ค้างตลอดไป" ที่เคยเจอกับ spinner แบบเดิม -->
+    <div x-data="{
+            visible: false,
+            timer: null,
+            onStart() { this.timer = setTimeout(() => { this.visible = true }, 250) },
+            onEnd() { clearTimeout(this.timer); this.visible = false }
+         }"
+         @htmx:before-request.window="onStart()"
+         @htmx:after-request.window="onEnd()"
+         @htmx:response-error.window="onEnd()"
+         @htmx:send-error.window="onEnd()"
+         x-show="visible" x-cloak
+         class="fixed inset-0 z-[100] bg-stone-900/30 flex items-center justify-center">
+        <div class="bg-white rounded-lg px-6 py-5 shadow-xl flex items-center gap-3">
+            <svg class="h-5 w-5 animate-spin text-emerald-700 shrink-0" viewBox="0 0 24 24" fill="none">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            </svg>
+            <span class="text-sm font-medium text-stone-700">กำลังดำเนินการ กรุณารอสักครู่...</span>
+        </div>
+    </div>
+
     <!-- Toast notification — ทำงานร่วมกับ HTMX: view ฝั่ง Django ส่ง response header "HX-Trigger"
          เป็น JSON เช่น {"toast": {"message": "ลบสำเร็จ", "level": "success"}} — Alpine ดักฟัง event
          "toast" ที่ HTMX ยิงออกมาอัตโนมัติ แล้วโชว์ทันที หายเองใน 3 วิ -->
@@ -104,5 +133,15 @@
             </div>
         </template>
     </div>
+
+    <script>
+        // ใช้คู่กับ buffer_form_submit's HX-Trigger "replaceLocation" — ไปหน้าปลายทางโดย "แทนที่"
+        // หน้าปัจจุบันใน browser history แทนที่จะ "เพิ่ม" entry ใหม่ (ต่างจาก HTMX's HX-Redirect ปกติ
+        // ที่ทำ window.location = url) — กันปุ่มย้อนกลับพาไปหน้า "ขั้นตอนแวะผ่าน" (เช่น กรอกยอดเผื่อ)
+        // ที่ผู้ใช้ไม่ได้มองว่าเป็นปลายทางที่ต้องย้อนกลับไปดูอีก
+        document.body.addEventListener('replaceLocation', function (evt) {
+            window.location.replace(evt.detail.url);
+        });
+    </script>
 </body>
 </html>

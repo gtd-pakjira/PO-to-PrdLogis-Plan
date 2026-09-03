@@ -80,6 +80,10 @@ def _basket_total(qty_by_column: dict, pack_size) -> int:
     ปัดเศษแต่ละคอลัมน์ (จุดส่ง x PO) ขึ้นเป็นตะกร้าเต็มก่อน แล้วรวมทุกคอลัมน์ — เป็นสูตรง่ายๆ ที่คงที่
     เหมือนกันทุกกลุ่มพื้นที่ (ต่างจากเรื่องจัดรถ/vehicle assignment ในชีต "คันที่ 1/2" ที่ซับซ้อนกว่า
     และยังไม่ได้ทำ เพราะรอข้อมูลเพิ่มเติม — อันนี้แค่ "ตะกร้ารวมกี่ใบ" ไม่เกี่ยวกับเรื่องจัดรถ)
+
+    ถ้ายอดสั่งสุทธิของคอลัมน์ไหนติดลบ (เช่น มียอดคืนมากกว่ายอดสั่งจนติดลบ) ไม่นับเป็นตะกร้าติดลบ —
+    "ตะกร้าติดลบ" ไม่มีความหมายในโลกจริง (ยอดคืนควรแปลว่า "ไม่ต้องส่งตะกร้าเพิ่ม" ไม่ใช่ "ส่งติดลบ")
+    clamp แต่ละคอลัมน์ไว้ที่ 0 เป็นค่าต่ำสุดก่อนรวม กันยอดรวมทั้งหมดติดลบผิดปกติ
     """
     try:
         pack_size = float(pack_size or 0)
@@ -90,7 +94,7 @@ def _basket_total(qty_by_column: dict, pack_size) -> int:
     total = 0
     for qty in qty_by_column.values():
         if qty:
-            total += math.ceil(qty / pack_size)
+            total += max(0, math.ceil(qty / pack_size))
     return total
 
 
@@ -251,6 +255,7 @@ def get_production_plan_table_from_db(plan_run_id: int) -> dict:
                 "price": r.price, "pack_size": r.pack_size,
                 "qty_by_location": {}, "pack_text_by_location": {},
                 "grand_total": r.grand_total, "buffer_qty": r.buffer_qty, "return_qty": r.return_qty,
+                "actual_production_qty": r.actual_production_qty,
             }
         by_barcode[r.barcode]["qty_by_location"][r.column_label] = r.qty
         by_barcode[r.barcode]["pack_text_by_location"][r.column_label] = r.pack_text

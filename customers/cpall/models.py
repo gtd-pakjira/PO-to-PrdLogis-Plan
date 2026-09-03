@@ -15,23 +15,26 @@ from django.db import models
 from core.models import Customer
 
 
-class SkuMaster(models.Model):
+class ProductMaster(models.Model):
     id = models.AutoField(primary_key=True)
     barcode = models.CharField(max_length=20, verbose_name="บาร์โค้ด")
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
     name_th = models.TextField(verbose_name="ชื่อสินค้า (ไทย)")
     name_en = models.TextField(verbose_name="ชื่อสินค้า (อังกฤษ)", blank=True, null=True)
-    pack_size = models.IntegerField(verbose_name="บรรจุ/ตก. (ชิ้นต่อลัง)")
+    pack_size = models.IntegerField(verbose_name="บรรจุ/ตก. (ชิ้นต่อตะกร้า)")
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="ราคา", blank=True, null=True)
     note = models.TextField(verbose_name="หมายเหตุ", blank=True, null=True)
+    is_active = models.BooleanField(default=True, verbose_name="เปิดใช้งาน")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "sku_master"
+        db_table = "product_master"
         managed = False
         verbose_name = "รหัสสินค้า"
         verbose_name_plural = "รหัสสินค้า (Product Code)"
         constraints = [
+            # ชื่อ constraint นี้ยังคงคำว่า "sku_master" ไว้ตามฐานข้อมูลจริง (ตอน rename ตาราง ตั้งใจ
+            # ไม่เปลี่ยนชื่อ constraint ตาม เพื่อลดความเสี่ยง — เปลี่ยนแค่ชื่อ table เฉยๆ พอ)
             models.UniqueConstraint(fields=["customer", "barcode"], name="sku_master_customer_barcode_key"),
         ]
 
@@ -46,6 +49,7 @@ class LocationMapping(models.Model):
     name_th = models.TextField(verbose_name="ชื่อสถานที่")
     group = models.CharField(max_length=50, db_column="group", verbose_name="กลุ่มพื้นที่")
     sub_location = models.CharField(max_length=50, blank=True, null=True, verbose_name="จุดส่งย่อย")
+    is_active = models.BooleanField(default=True, verbose_name="เปิดใช้งาน")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -223,7 +227,7 @@ class PlanRun(models.Model):
 class PlanRunImport(models.Model):
     """ตารางกลาง (through) ระหว่าง PlanRun กับ PoImport — PK คู่ (plan_run_id, po_import_id) ในฐานข้อมูล
     จริง ใช้ CompositePrimaryKey ได้ตรงนี้เพราะไม่มีความจำเป็นต้องลงทะเบียนใน Django Admin เลย
-    (ต่างจาก SkuMaster/LocationMapping ที่ต้องใช้ผ่าน Admin จึงติดข้อจำกัดเรื่อง composite PK)"""
+    (ต่างจาก ProductMaster/LocationMapping ที่ต้องใช้ผ่าน Admin จึงติดข้อจำกัดเรื่อง composite PK)"""
     pk = models.CompositePrimaryKey("plan_run_id", "po_import_id")
     plan_run = models.ForeignKey(PlanRun, on_delete=models.CASCADE, db_column="plan_run_id")
     po_import = models.ForeignKey(PoImport, on_delete=models.CASCADE, db_column="po_import_id")
@@ -254,6 +258,7 @@ class PlanSkuResult(models.Model):
     grand_total = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
     buffer_qty = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     return_qty = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    actual_production_qty = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     basket_total = models.IntegerField(blank=True, null=True)
 
     class Meta:

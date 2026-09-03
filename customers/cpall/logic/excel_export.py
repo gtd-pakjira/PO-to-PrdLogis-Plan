@@ -287,8 +287,13 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
         for col, sub_location in col_to_sub_location.items():
             if sub_location not in covered_sub_locations:
                 continue  # จุดนี้ยังไม่มีรอบ PO มาเลย -> เว้นว่างไว้ตามเดิม ไม่ใช่ 0
-            qty = sub_qty.get(sub_location, 0)  # มีรอบ PO มาแล้ว แต่ SKU นี้อาจสั่ง 0 -> กรอก 0 ชัดเจน
-            ws.cell(row=row, column=col, value=qty)
+            qty = sub_qty.get(sub_location, 0)
+            # Production Plan (ต่างจาก Logistic Plan) ถ้ายอดสั่งเป็น 0 ให้เว้นว่างไว้ ไม่เขียน 0 ลงไป
+            # (ตามที่ Admin ต้องการ — Logistic Plan/แผนรถยังคงเขียน 0 ชัดเจนเหมือนเดิม) — ต้องเคลียร์
+            # เซลล์ผ่าน .value ตรงๆ เสมอ (ไม่ใช่แค่ "ข้ามไม่เขียน") เพราะไฟล์เทมเพลต live ถูกใช้ซ้ำทุก
+            # รอบ ถ้าเคยมีค่าจากรอบก่อนหน้าค้างอยู่ (ไม่ใช่ 0) แล้วรอบนี้ไม่เขียนอะไรเลย ค่าเก่าจะยังคง
+            # ค้างอยู่โดยไม่ตั้งใจ (เจอบั๊กจริงแบบนี้กับยอดเผื่อมาแล้ว — ดู comment ด้านล่างเรื่องยอดเผื่อ)
+            ws.cell(row=row, column=col).value = qty if qty != 0 else None
             grand_total += qty
             remaining.pop(sub_location, None)
 
@@ -299,10 +304,18 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
         unmatched_sub_locations.update(remaining.keys())
         filled.append(barcode)
 
-        # เขียนยอดเผื่อ (ถ้ามีข้อมูลสำหรับ SKU นี้)
+        # เขียนยอดเผื่อเสมอ (ไม่ว่าจะมีข้อมูลสำหรับ SKU นี้หรือไม่) — ***บั๊กที่เคยเจอ***: เดิมเขียนแค่
+        # ตอนมีค่า (if buffer_qty is not None) ทำให้ตอนไม่มีรอบเช้าต่างจังหวัด (buffer_override={})
+        # ไม่เขียนอะไรเลย ปล่อยให้ "ค่ายอดเผื่อเก่าที่เคยเขียนไว้ในรอบก่อนหน้า" ยังค้างอยู่ในไฟล์เทมเพลต
+        # live (ไฟล์เดียวกันถูกใช้ซ้ำทุกรอบ) ทำให้ยอดที่ต้องผลิตจริงคำนวณผิดจากยอดเผื่อที่ไม่เกี่ยวข้อง
+        # กับรอบนี้เลย — ต้องเขียนเสมอ ถ้าไม่มีค่า (None) ก็เขียน None ทับ เพื่อล้างค่าเก่าทิ้งให้ชัดเจน
+        #
+        # ***บั๊กที่ 2 ที่เพิ่งเจอ*** (สำคัญกว่า): ws.cell(row=.., column=.., value=None) ของ openpyxl
+        # "ไม่เคลียร์" เซลล์จริง! — openpyxl ตีความ value=None ว่า "ไม่ได้ส่ง value มา" (เหมือนไม่ระบุ
+        # parameter นี้เลย) ไม่ใช่ "ตั้งค่าเป็นว่างเปล่า" ทดสอบยืนยันแล้วว่าเซลล์ที่มีค่าเก่าอยู่ก่อน จะ
+        # ยังคงค่าเดิมอยู่แม้เรียกแบบนี้ก็ตาม — ต้องเข้าถึง .value ผ่าน attribute ตรงๆ ถึงจะเคลียร์ได้จริง
         buffer_qty = buffer_qty_by_barcode.get(barcode)
-        if buffer_qty is not None:
-            ws.cell(row=row + BUFFER_ROW_OFFSET, column=BUFFER_COL, value=buffer_qty)
+        ws.cell(row=row + BUFFER_ROW_OFFSET, column=BUFFER_COL).value = buffer_qty
 
     if missing_in_template:
         # ไม่ใช่แค่เตือน — หยุดทันที เพราะแปลว่ามี SKU สั่งจริงใน PO แต่จะหายไปเงียบๆ จากไฟล์ผลลัพธ์

@@ -1,0 +1,18 @@
+{% extends "cpall/base.html" %}
+{% block nav_po %}active{% endblock %}
+{% block title %}พบสินค้าที่ยังไม่รู้จัก — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">พบสินค้าที่ยังไม่รู้จัก</h1>
+    <p class="text-sm text-stone-500 mt-1">
+        PO นี้นำเข้าสำเร็จแล้ว และไม่กระทบการคำนวณแผนเลย — แค่มี {{ unknown_skus|length }} รายการที่ยังไม่เคย
+        กรอกข้อมูลไว้ในระบบ กรอกไว้ตอนนี้เลยก็ได้ (จะได้เห็นชื่อสินค้าถูกต้องตอนกรอกยอดเผื่อทีหลัง)
+        หรือข้ามไปก่อน แล้วมากรอกทีหลังผ่าน Django Admin ก็ได้เช่นกัน
+    </p>
+</div>
+
+{% include "cpall/_resolve_products_form.html" %}
+
+{% endblock %}

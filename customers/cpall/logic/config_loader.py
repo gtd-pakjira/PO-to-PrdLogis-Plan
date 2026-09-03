@@ -10,7 +10,7 @@ config_loader.py — โหลด config จาก YAML (sku_master.yaml, locati
 import yaml
 
 from customers.cpall.logic.db import get_cpall_customer_id
-from customers.cpall.models import LocationMapping, SkuMaster
+from customers.cpall.models import LocationMapping, ProductMaster
 
 
 def load_sku_master(path: str = "customers/cpall/config/sku_master.yaml"):
@@ -20,7 +20,7 @@ def load_sku_master(path: str = "customers/cpall/config/sku_master.yaml"):
     customer_id = get_cpall_customer_id()
     skus = data.get("skus", [])
     for sku in skus:
-        SkuMaster.objects.update_or_create(
+        ProductMaster.objects.update_or_create(
             customer_id=customer_id, barcode=sku["barcode"],
             defaults={
                 "name_th": sku["name_th"],

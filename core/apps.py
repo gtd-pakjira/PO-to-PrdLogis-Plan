@@ -5,7 +5,7 @@ from django.db.backends.signals import connection_created
 def _set_rls_session_vars(sender, connection, **kwargs):
     """
     ตั้งค่า session variable ให้ RLS ของ Postgres ทำงานถูกต้องบน connection ของ Django ORM เอง
-    (Django Admin ใช้ connection นี้ตอนเข้าไปดู/แก้ SkuMaster, LocationMapping ที่มี RLS ป้องกันอยู่)
+    (Django Admin ใช้ connection นี้ตอนเข้าไปดู/แก้ ProductMaster, LocationMapping ที่มี RLS ป้องกันอยู่)
 
     *** ข้อจำกัดชั่วคราว *** ตอนนี้ระบบมีลูกค้าเดียว (cpall) เลย hardcode ให้ทุก connection ของ
     Django ORM มองเห็นแค่ cpall เสมอ — พอทำระบบสิทธิ์ผู้ใช้ในอนาคต ต้องเปลี่ยนจุดนี้ให้ดึง

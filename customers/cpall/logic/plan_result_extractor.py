@@ -16,7 +16,12 @@ basket_total (รวมตะกร้า) อยู่คนละชีตก�
 (ดู test_plan_view_data.py) ไปพลางก่อน — จุดนี้บันทึกไว้ชัดเจนว่าเป็นการลดขอบเขตที่ตั้งใจ ไม่ใช่มองข้าม
 """
 from customers.cpall.logic.excel_calc import load_calculated_workbook
-from customers.cpall.logic.excel_export import BUFFER_COL, BUFFER_ROW_OFFSET, _find_sub_location_columns
+from customers.cpall.logic.excel_export import (
+    BUFFER_COL,
+    BUFFER_ROW_OFFSET,
+    _find_sub_location_columns,
+    _find_total_column,
+)
 from customers.cpall.logic.excel_export import COL_NAME as PP_COL_NAME
 from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
 from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
@@ -65,6 +70,9 @@ def extract_production_plan_results(filepath: str) -> list[dict]:
 
     col_to_sub_location = _find_sub_location_columns(ws)
     header_rows = _find_pp_sku_header_rows(ws)
+    total_col = _find_total_column(ws)  # ไม่ hardcode เลขคอลัมน์ — สแกนหาหัวตาราง "ยอดรวม" เหมือนกับ
+    # ตอน export — คอลัมน์เดียวกันนี้ที่แถวรอง (row+1) มีสูตร "ยอดที่ต้องผลิตจริง" (รวมยอดเผื่อ หัก
+    # คืนแล้ว) อยู่ ต่างจาก grand_total (แถวหลัก) ซึ่งเป็นแค่ยอดสั่งตาม PO เฉยๆ
 
     rows = []
     for barcode, row in sorted(header_rows.items(), key=lambda kv: kv[1]):
@@ -74,6 +82,11 @@ def extract_production_plan_results(filepath: str) -> list[dict]:
         pack_size = ws.cell(row=row, column=PP_COL_PACK).value
         buffer_qty = ws.cell(row=row + BUFFER_ROW_OFFSET, column=BUFFER_COL).value
         return_qty = ws.cell(row=row + PP_RETURN_ROW_OFFSET, column=BUFFER_COL).value  # ค่าจริงจาก LibreOffice
+        actual_production_qty = None
+        if total_col is not None:
+            val = ws.cell(row=row + PP_NAME_EN_ROW_OFFSET, column=total_col).value
+            if isinstance(val, (int, float)):
+                actual_production_qty = val
 
         qty_by_location = {}
         grand_total = 0
@@ -90,6 +103,7 @@ def extract_production_plan_results(filepath: str) -> list[dict]:
                 "pack_text": _format_pack_text(pack_text),
                 "grand_total": None,  # เติมทีหลังหลังรวมยอดครบทุกคอลัมน์ของ SKU นี้
                 "buffer_qty": buffer_qty, "return_qty": return_qty, "basket_total": None,
+                "actual_production_qty": actual_production_qty,
             })
 
         for r in rows:

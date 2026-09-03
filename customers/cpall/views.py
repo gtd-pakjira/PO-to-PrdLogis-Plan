@@ -37,6 +37,7 @@ from customers.cpall.logic.po_parser import (
     POInUseError,
     POParseError,
     check_unknown_locations,
+    check_unknown_skus,
     delete_po_import,
     list_po_imports,
     list_po_imports_paginated,
@@ -44,6 +45,7 @@ from customers.cpall.logic.po_parser import (
 )
 from customers.cpall.logic.po_regenerator import PORegenerateError, regenerate_po_file_bytes
 from customers.cpall.logic.po_view_data import get_po_detail
+from customers.cpall.logic.product_master_manager import save_product
 from customers.cpall.logic.template_manager import (
     TemplateInUseError,
     TemplateValidationError,
@@ -181,6 +183,16 @@ def import_submit(request):
             return response
         return redirect("cpall:resolve_locations", po_import_id=po_import_id)
 
+    unknown_skus = check_unknown_skus(po_import_id)
+    if unknown_skus:
+        # ต่างจาก location ตรงที่ไม่บังคับ (product_master ไม่มีผลต่อการคำนวณเลย) แต่ยังพาไปหน้านี้
+        # เพื่อ "แนะนำ" ให้กรอกไว้ให้ครบ (มีปุ่มข้ามในหน้านั้นให้กดผ่านได้เลยถ้าไม่อยากกรอกตอนนี้)
+        if is_htmx:
+            response = HttpResponse(status=200)
+            response["HX-Redirect"] = reverse("cpall:resolve_products", args=[po_import_id])
+            return response
+        return redirect("cpall:resolve_products", po_import_id=po_import_id)
+
     # สำเร็จสมบูรณ์ -> ไปหน้า PO ทั้งหมดเลย (เห็นผลลัพธ์อยู่ในบริบทของรายการจริง แทนที่จะเป็นหน้า
     # สรุปผลโดดๆ ที่ต้องกดออกไปอีกที)
     if is_htmx:
@@ -216,6 +228,15 @@ def resolve_locations(request, po_import_id):
                 return render(request, "cpall/_resolve_locations_form.html", context)
             return render(request, "cpall/resolve_locations.html", context)
 
+        # location ครบหมดแล้ว -> เช็คต่อว่ามีสินค้าที่ยังไม่รู้จักไหม (ไม่บังคับ แค่แนะนำ)
+        unknown_skus = check_unknown_skus(po_import_id)
+        if unknown_skus:
+            if is_htmx:
+                response = HttpResponse(status=200)
+                response["HX-Redirect"] = reverse("cpall:resolve_products", args=[po_import_id])
+                return response
+            return redirect("cpall:resolve_products", po_import_id=po_import_id)
+
         if is_htmx:
             response = HttpResponse(status=200)
             response["HX-Redirect"] = reverse("cpall:po_list")
@@ -225,6 +246,46 @@ def resolve_locations(request, po_import_id):
     return render(request, "cpall/resolve_locations.html", {
         "po_import_id": po_import_id, "unknown_locations": unknown_locations,
         "existing_groups": get_existing_groups(),
+    })
+
+
+def resolve_products(request, po_import_id):
+    """ให้ Admin กรอกข้อมูลสินค้าที่ยังไม่รู้จักผ่านเว็บ — ต่างจาก resolve_locations ตรงที่ไม่บังคับ
+    (product_master ไม่มีผลต่อการคำนวณเลย มีไว้แค่แสดงชื่อสินค้าที่หน้ากรอกยอดเผื่อ) มีปุ่มข้ามได้เสมอ"""
+    unknown_skus = check_unknown_skus(po_import_id)
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    if request.method == "POST":
+        for barcode, item_name in unknown_skus:
+            name_th = request.POST.get(f"name_th_{barcode}", "").strip() or item_name
+            name_en = request.POST.get(f"name_en_{barcode}", "").strip()
+            pack_size_str = request.POST.get(f"pack_size_{barcode}", "").strip()
+            unit_price_str = request.POST.get(f"unit_price_{barcode}", "").strip()
+
+            if not pack_size_str:
+                continue  # ยังไม่ได้กรอกอันนี้ -> ข้ามไปก่อน (ไม่บังคับ ต่างจาก location)
+            try:
+                pack_size = int(pack_size_str)
+                unit_price = float(unit_price_str) if unit_price_str else None
+            except ValueError:
+                continue
+            save_product(barcode, name_th, name_en or None, pack_size, unit_price)
+
+        remaining = check_unknown_skus(po_import_id)
+        if remaining:
+            context = {"po_import_id": po_import_id, "unknown_skus": remaining}
+            if is_htmx:
+                return render(request, "cpall/_resolve_products_form.html", context)
+            return render(request, "cpall/resolve_products.html", context)
+
+        if is_htmx:
+            response = HttpResponse(status=200)
+            response["HX-Redirect"] = reverse("cpall:po_list")
+            return response
+        return redirect("cpall:po_list")
+
+    return render(request, "cpall/resolve_products.html", {
+        "po_import_id": po_import_id, "unknown_skus": unknown_skus,
     })
 
 
@@ -290,7 +351,7 @@ def buffer_form(request):
         get_group_templates,
         read_buffer_qty_from_template,
     )
-    from customers.cpall.models import SkuMaster
+    from customers.cpall.models import ProductMaster
 
     po_import_ids_str = request.GET.get("po_import_ids", "")
     po_import_ids = [int(x) for x in po_import_ids_str.split(",") if x]
@@ -316,7 +377,7 @@ def buffer_form(request):
     except Exception:
         default_buffer = {}
 
-    name_lookup = {s.barcode: s.name_th for s in SkuMaster.objects.filter(barcode__in=barcodes)}
+    name_lookup = {s.barcode: s.name_th for s in ProductMaster.objects.filter(barcode__in=barcodes)}
     sku_rows = sorted(
         [
             {"barcode": bc, "name_th": name_lookup.get(bc, bc), "default_buffer": default_buffer.get(bc, 0)}
@@ -367,8 +428,15 @@ def buffer_form_submit(request):
         return error_response(f"สร้างแผนล้มเหลว: {type(e).__name__}: {e}", status=500)
 
     if is_htmx:
+        # ใช้ "replaceLocation" (custom event ที่ตัวเองทำ window.location.replace()) แทน HX-Redirect
+        # ธรรมดา — HX-Redirect จะ "เพิ่ม" หน้าแผนใหม่เข้า browser history (window.location = url) ทำให้
+        # หน้ากรอกยอดเผื่อ (ที่ควรเป็นแค่ "ขั้นตอนแวะผ่าน" ไม่ใช่ปลายทาง) ยังค้างอยู่ใน history —
+        # พอกดปุ่มย้อนกลับจากหน้าแผน จะเด้งไปหน้ากรอกยอดเผื่อแทนที่จะเป็นหน้า PO ที่กดสร้างแผนมาจริงๆ
+        # .replace() แทนที่ entry ปัจจุบัน (หน้ากรอกยอดเผื่อ) เลย ทำให้กด back ข้ามไปหน้า PO ตรงๆ
         response = HttpResponse(status=200)
-        response["HX-Redirect"] = reverse("cpall:view_plan", args=[result["plan_run_id"]])
+        response["HX-Trigger"] = json.dumps({
+            "replaceLocation": {"url": reverse("cpall:view_plan", args=[result["plan_run_id"]])}
+        })
         return response
     return redirect("cpall:view_plan", plan_run_id=result["plan_run_id"])
 
