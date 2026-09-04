@@ -307,30 +307,13 @@ def new_plan_submit(request):
     if not po_import_ids:
         return error_response("ต้องเลือก PO อย่างน้อย 1 รอบ")
 
-    # ยอดเผื่อเกี่ยวข้องกับกลุ่ม "รอบเช้าต่างจังหวัด" เท่านั้น (เทมเพลตกลุ่มอื่นไม่มีคอลัมน์นี้เลย) —
-    # ถามเฉพาะตอนที่รอบ PO ที่เลือกมีข้อมูลกลุ่มนี้จริง ไม่งั้นข้ามหน้ากรอกยอดเผื่อไปสร้างแผนได้เลย
-    # (ยอดเผื่อยังไม่มีสูตรคำนวณที่แน่นอน รอถาม Admin ก่อน — ดู README)
-    from customers.cpall.logic.logistic_plan_export import group_has_data
-    if group_has_data(po_import_ids, "รอบเช้าต่างจังหวัด"):
-        # ไปหน้ากรอกยอดเผื่อจริง (ไม่ใช่ error) — ต้อง navigate เต็มหน้าเสมอ ไม่ใช่แค่เด้ง popup เฉยๆ
-        if is_htmx:
-            response = HttpResponse(status=200)
-            response["HX-Redirect"] = _buffer_form_url(po_import_ids)
-            return response
-        return redirect_to_buffer_form(request, po_import_ids)
-
-    try:
-        result = run_plan(po_import_ids, buffer_override={})  # ไม่มีรอบเช้าต่างจังหวัด -> ไม่ใส่ยอดเผื่อเลย
-    except ReconciliationError as e:
-        return error_response(str(e), status=409)
-    except Exception as e:
-        return error_response(f"สร้างแผนล้มเหลว: {type(e).__name__}: {e}", status=500)
-
+    # ไปหน้ากรอกยอดเผื่อเสมอ — ขึ้นทุกครั้งที่สร้างแผน ไม่ใช่แค่ตอนมีรอบเช้าต่างจังหวัด
+    # (ยอดเผื่อเป็นข้อมูลสำคัญที่ Admin ต้องยืนยันทุกรอบ ไม่ใช่แค่กลุ่มเช้าต่างจังหวัด)
     if is_htmx:
         response = HttpResponse(status=200)
-        response["HX-Redirect"] = reverse("cpall:view_plan", args=[result["plan_run_id"]])
+        response["HX-Redirect"] = _buffer_form_url(po_import_ids)
         return response
-    return redirect("cpall:view_plan", plan_run_id=result["plan_run_id"])
+    return redirect_to_buffer_form(request, po_import_ids)
 
 
 def _buffer_form_url(po_import_ids):
@@ -346,46 +329,46 @@ def redirect_to_buffer_form(request, po_import_ids):
 def buffer_form(request):
     import openpyxl
 
-    from customers.cpall.logic.logistic_plan_export import (
-        _find_line_no_column,
-        _find_sku_header_rows,
-        get_group_templates,
-        read_buffer_qty_from_template,
+    from customers.cpall.logic.excel_export import (
+        SHEET_NAME as PP_SHEET_NAME,
     )
-    from customers.cpall.models import ProductMaster
+    from customers.cpall.logic.excel_export import TEMPLATE_PATH as PP_TEMPLATE_PATH
+    from customers.cpall.logic.excel_export import (
+        _find_sku_header_rows as _find_pp_sku_header_rows,
+    )
+    from customers.cpall.models import PlanSkuResult, ProductMaster
 
     po_import_ids_str = request.GET.get("po_import_ids", "")
     po_import_ids = [int(x) for x in po_import_ids_str.split(",") if x]
     if not po_import_ids:
         return render(request, "cpall/plan_error.html", {"error": "ไม่พบรอบ PO ที่เลือกไว้"})
 
-    # กรอกยอดเผื่อเฉพาะ SKU ที่มีอยู่ในเทมเพลต "รอบเช้าต่างจังหวัด" เท่านั้น (18 ตัว ไม่ใช่ทั้ง 19)
-    # เพราะยอดเผื่อผูกกับกลุ่มนี้กลุ่มเดียวในทางปฏิบัติ (ดูเหตุผลใน README) — ชื่อกลุ่มนี้ hardcode ไว้
-    # ตรงนี้โดยตั้งใจ (business logic เฉพาะกลุ่มนี้กลุ่มเดียว ไม่ใช่พฤติกรรมทั่วไปของทุกกลุ่ม)
-    group_templates = get_group_templates()
-    if "รอบเช้าต่างจังหวัด" not in group_templates:
-        return render(request, "cpall/plan_error.html",
-                       {"error": "ไม่พบกลุ่ม 'รอบเช้าต่างจังหวัด' (ถูกปิดใช้งานหรือลบไปแล้ว) — ฟีเจอร์ยอดเผื่อผูกกับกลุ่มนี้โดยเฉพาะ"})
-    template_path, sheet_name = group_templates["รอบเช้าต่างจังหวัด"]
-    wb = openpyxl.load_workbook(template_path)
-    ws = wb[sheet_name]
-    line_no_col, header_row = _find_line_no_column(ws)
-    name_col = line_no_col + 1
-    barcodes = list(_find_sku_header_rows(ws, name_col).keys())
+    # ดึง SKU จาก Production Plan template (ครบ 19 ตัว เรียงตามลำดับในแผนผลิต) —
+    # เดิมดึงจากเทมเพลตรอบเช้าต่างจังหวัด (18 ตัว) ซึ่งขาดพุทราจีนและไม่ตรงกับ Production Plan
+    wb = openpyxl.load_workbook(PP_TEMPLATE_PATH)
+    ws = wb[PP_SHEET_NAME]
+    header_rows = _find_pp_sku_header_rows(ws)
+    # เรียงตามตำแหน่งแถวในไฟล์ (ตามลำดับใน Production Plan จริง)
+    barcodes = [bc for bc, _ in sorted(header_rows.items(), key=lambda kv: kv[1])]
 
-    try:
-        default_buffer = read_buffer_qty_from_template()
-    except Exception:
-        default_buffer = {}
+    # default ยอดเผื่อ: ดึงจาก buffer_qty ล่าสุดที่เคยบันทึกไว้ใน plan_sku_result —
+    # ไม่ใช่จากไฟล์เทมเพลต (ซึ่งเป็นค่าเก่าที่ Admin กรอกไว้ครั้งแรก ไม่ใช่ล่าสุด)
+    default_buffer = {}
+    last_plan = PlanSkuResult.objects.filter(
+        sheet_type="production", buffer_qty__isnull=False
+    ).order_by("-id").first()
+    if last_plan:
+        for row in PlanSkuResult.objects.filter(
+            plan_run_id=last_plan.plan_run_id, sheet_type="production", buffer_qty__isnull=False
+        ).values("barcode", "buffer_qty").distinct("barcode"):
+            if row["buffer_qty"] is not None:
+                default_buffer[row["barcode"]] = float(row["buffer_qty"])
 
     name_lookup = {s.barcode: s.name_th for s in ProductMaster.objects.filter(barcode__in=barcodes)}
-    sku_rows = sorted(
-        [
-            {"barcode": bc, "name_th": name_lookup.get(bc, bc), "default_buffer": default_buffer.get(bc, 0)}
-            for bc in barcodes
-        ],
-        key=lambda r: r["name_th"],
-    )
+    sku_rows = [
+        {"barcode": bc, "name_th": name_lookup.get(bc, bc), "default_buffer": default_buffer.get(bc, 0)}
+        for bc in barcodes
+    ]
 
     return render(request, "cpall/buffer_form.html", {
         "po_import_ids": po_import_ids,

@@ -43,6 +43,12 @@ CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[
     'https://*.app.github.dev',
     'https://localhost:8000',
     'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    # LAN access — รองรับ IP ใน subnet ทั่วไป ให้เครื่องอื่นใน network เดียวกันเข้าได้
+    # (ต้องรัน: python manage.py runserver 0.0.0.0:8000 แทน localhost)
+    'http://192.168.0.1:8000',
+    'http://192.168.1.1:8000',
+    'http://10.0.0.1:8000',
 ])
 
 

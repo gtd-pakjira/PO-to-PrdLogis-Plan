@@ -55,11 +55,8 @@ def get_po_number_by_column_label(po_import_ids: list[int], group_name: str) -> 
     result = {}
     for sub_loc, po_numbers in po_numbers_by_sub_location.items():
         sorted_pos = sorted(po_numbers)
-        if len(sorted_pos) == 1:
-            result[sub_loc] = sorted_pos[0]  # คอลัมน์เดียว ไม่มี "PO1" ต่อท้าย (เช่น มหาชัย)
-        else:
-            for i, po_number in enumerate(sorted_pos, start=1):
-                result[f"{sub_loc} PO{i}"] = po_number
+        for i, po_number in enumerate(sorted_pos, start=1):
+            result[f"{sub_loc} PO{i}"] = po_number
     return result
 
 

@@ -137,11 +137,16 @@ def extract_logistic_plan_results(filepath: str, group_name: str) -> list[dict]:
         only_col = list(col_labels.keys())[0]
         sub_loc, po_idx = col_labels[only_col]
         if po_idx is None:
-            col_labels[only_col] = (sub_loc, 1)
+            col_labels[only_col] = (sub_loc, 1)  # default PO1 ถ้าหา po_idx ไม่เจอ
 
     col_to_label = {}
     for col, (sub_loc, po_idx) in col_labels.items():
-        col_to_label[col] = f"{sub_loc} PO{po_idx}" if po_idx else sub_loc
+        # ใส่ "PO{n}" เสมอถ้ามี po_idx (แม้จะมีแค่คอลัมน์เดียว) — กัน label ไม่ตรงกับ
+        # get_po_number_by_column_label() ซึ่งสร้าง key รูปแบบ "{sub_loc} PO{n}" เสมอ
+        if po_idx is not None:
+            col_to_label[col] = f"{sub_loc} PO{po_idx}"
+        else:
+            col_to_label[col] = sub_loc  # fallback: คอลัมน์เดียวที่หา po_idx ไม่เจอเลย
 
     header_rows = _find_lp_sku_header_rows(ws, name_col)
 

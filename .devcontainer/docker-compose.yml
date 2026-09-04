@@ -3,6 +3,8 @@ services:
     image: mcr.microsoft.com/devcontainers/python:3.12
     volumes:
       - ../..:/workspaces:cached
+    ports:
+      - "8000:8000"
     command: sleep infinity
     environment:
       DB_HOST: db

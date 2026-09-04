@@ -139,6 +139,14 @@
         document.body.addEventListener('replaceLocation', function (evt) {
             window.location.replace(evt.detail.url);
         });
+
+        // ล้าง checkbox PO ทุกครั้งที่กลับมาหน้านี้ด้วย back/forward — กัน checkbox ค้างจากรอบก่อน
+        // (pageshow ยิงทุกครั้งที่หน้าแสดง รวมถึงตอนดึงจาก bfcache ต่างจาก load ที่ยิงแค่ครั้งแรก)
+        window.addEventListener('pageshow', function () {
+            document.querySelectorAll('input[name="po_import_ids"]').forEach(function (cb) {
+                cb.checked = false;
+            });
+        });
     </script>
 </body>
 </html>

@@ -1,0 +1,38 @@
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/python:3.12
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: gtd_poc
+      DB_USER: app_role
+      DB_PASSWORD: app_password
+      DB_ADMIN_USER: postgres
+      DB_ADMIN_PASSWORD: postgres
+      SECRET_KEY: "ใส่ค่า SECRET_KEY จาก .env ของคุณ"
+      DEBUG: "True"
+    command: >
+      bash -c "pip install -r requirements.txt -q &&
+               python manage.py runserver 0.0.0.0:8000"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gtd_poc
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  pgdata:
