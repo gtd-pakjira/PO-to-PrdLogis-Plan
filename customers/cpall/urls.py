@@ -10,6 +10,7 @@ urlpatterns = [
     path("plans/", views.plan_list, name="plan_list"),
     path("import/", views.import_form, name="import_form"),
     path("import/submit/", views.import_submit, name="import_submit"),
+    path("import/confirm-duplicates/", views.confirm_duplicates, name="confirm_duplicates"),
     path("po/<int:po_import_id>/resolve-locations/", views.resolve_locations, name="resolve_locations"),
     path("po/<int:po_import_id>/resolve-products/", views.resolve_products, name="resolve_products"),
     path("plan/new/", views.new_plan_submit, name="new_plan_submit"),

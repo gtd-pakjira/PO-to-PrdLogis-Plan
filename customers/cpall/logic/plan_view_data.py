@@ -273,6 +273,11 @@ def get_logistic_plan_table_from_db(plan_run_id: int, group_name: str) -> dict:
 
     columns = []
     by_barcode = {}
+    basket_total_by_column = {}  # ตะกร้ารวมต่อคอลัมน์ (จุดส่ง x PO) — คำนวณสดจากข้อมูลที่มีอยู่แล้ว
+    # ไม่ต้องแก้ schema/extraction เลย — สูตรตรงกับที่ Admin ใช้จริงในไฟล์ Excel (ชีต "-ผลิต" แถว
+    # "รวมยอดตะกร้า") เป๊ะ (SUM ของ ROUNDUP(qty/pack_size) ต่อ SKU ในคอลัมน์นั้น) ต่างแค่เรื่องเครื่องหมาย
+    # — สูตร Excel จริงมี "-" นำหน้าทำให้ค่าติดลบ แต่ตั้งใจไม่ใส่ตรงนี้ ให้เป็นค่าบวกสอดคล้องกับ
+    # "รวมตะกร้าทั้งหมด" (จาก basket_total field) ที่แสดงเป็นบวกอยู่แล้ว กันสับสนไม่มีคำอธิบายกำกับ
     for r in qs:
         if r.column_label not in columns:
             columns.append(r.column_label)
@@ -286,4 +291,46 @@ def get_logistic_plan_table_from_db(plan_run_id: int, group_name: str) -> dict:
         by_barcode[r.barcode]["qty_by_column"][r.column_label] = r.qty
         by_barcode[r.barcode]["pack_text_by_column"][r.column_label] = r.pack_text
 
-    return {"columns": columns, "rows": list(by_barcode.values())}
+        if r.qty and r.pack_size:
+            basket_total_by_column[r.column_label] = (
+                basket_total_by_column.get(r.column_label, 0) + math.ceil(float(r.qty) / r.pack_size)
+            )
+
+    return {
+        "columns": columns, "rows": list(by_barcode.values()),
+        "basket_total_by_column": basket_total_by_column,
+    }
+
+
+def get_skipped_skus(plan_run_id: int) -> dict:
+    """
+    คืน {"active_skipped": [...], "inactive_skipped": [...]} — SKU ในเทมเพลต Production Plan ที่ PO
+    รอบนี้ไม่ได้สั่งเลย (grand_total = 0 หรือ None) แยกตามสถานะ active/inactive ใน ProductMaster
+    ตอนนี้ (ไม่ใช่ตอนสร้างแผน — ถ้า Admin เปลี่ยนสถานะทีหลัง ผลตรงนี้จะเปลี่ยนตามด้วย เพราะ query สด
+    ทุกครั้งที่เปิดหน้า ไม่ได้ snapshot ไว้ตอนสร้างแผน) — ใช้แสดง banner แจ้งเตือนในหน้า plan detail
+    เฉยๆ ไม่บล็อกอะไร ไม่ต้องมี business rule ตายตัวว่าควรทำยังไงกับ SKU เหล่านี้ (ยังไม่มีคำตอบจาก
+    Admin) — แค่ให้ Admin เห็นก่อนดาวน์โหลดไปใช้จริงว่ามีอะไรถูกข้ามไปบ้าง
+    """
+    from customers.cpall.models import PlanSkuResult, ProductMaster
+
+    results = PlanSkuResult.objects.filter(plan_run_id=plan_run_id, sheet_type="production")
+    by_barcode = {}
+    for r in results:
+        if r.barcode not in by_barcode:
+            by_barcode[r.barcode] = {"barcode": r.barcode, "name_th": r.name_th, "grand_total": r.grand_total}
+
+    skipped_barcodes = [b for b, info in by_barcode.items() if not info["grand_total"]]
+    if not skipped_barcodes:
+        return {"active_skipped": [], "inactive_skipped": []}
+
+    inactive_set = set(
+        ProductMaster.objects.filter(barcode__in=skipped_barcodes, is_active=False)
+        .values_list("barcode", flat=True)
+    )
+
+    active_skipped, inactive_skipped = [], []
+    for b in sorted(skipped_barcodes):
+        item = {"barcode": b, "name_th": by_barcode[b]["name_th"]}
+        (inactive_skipped if b in inactive_set else active_skipped).append(item)
+
+    return {"active_skipped": active_skipped, "inactive_skipped": inactive_skipped}

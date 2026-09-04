@@ -133,15 +133,19 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
     out = out.dropna(subset=["po_number", "barcode"])
     out = out[out["po_number"].str.strip() != ""]
 
-    # เช็คแถวที่ซ้ำกันเป๊ะภายในไฟล์เดียวกัน (PO เดียวกัน + จุดส่งเดียวกัน + SKU เดียวกัน + line_no
-    # เดียวกัน) — เจอได้บางครั้งจากไฟล์ export ต้นทางเอง ไม่ใช่ความผิดของเรา แต่ถ้าไม่กรองออกจะทำให้
-    # ยอดสั่งเพี้ยน (นับซ้ำ) — ตัดแถวซ้ำออก เก็บแถวแรกที่เจอไว้ แล้วแจ้งจำนวนที่ตัดออกให้เห็นชัดเจน
-    dup_key_cols = ["po_number", "fc_code", "barcode", "line_no"]
-    dup_mask = out.duplicated(subset=dup_key_cols, keep="first")
-    n_dup = int(dup_mask.sum())
-    if n_dup > 0:
-        print(f"[po_parser] ⚠️  พบแถวข้อมูลซ้ำกันเป๊ะ {n_dup} แถว (PO+จุดส่ง+SKU+ลำดับเดียวกัน) — ตัดออกอัตโนมัติ")
-        out = out[~dup_mask]
+    # ไม่ตัดแถวซ้ำออกอัตโนมัติอีกต่อไป (เปลี่ยน business rule แล้ว — PO ต้องเป็น Source of Truth เสมอ
+    # ไม่ลบข้อมูลอะไรโดย Admin ไม่อนุมัติ) — เดิมตรงนี้เคยตัดแถวที่ซ้ำกันเป๊ะ (po_number+fc_code+
+    # barcode+line_no) ออกอัตโนมัติ ตอนนี้ย้าย logic ตรวจจับไปไว้ที่ check_duplicate_rows() แยกต่างหาก
+    # (เรียกจาก view ก่อน import จริง ให้ Admin เห็นแล้วเลือกเองว่าจะ Continue/Stop)
+
+    # potential duplicate (PO+จุดส่ง+SKU เดียวกัน แต่ line_no ต่างกัน) — ยังไม่มี business rule ยืนยัน
+    # จาก Admin ว่าควรทำยังไง (อาจเป็นรายการสั่งจริง 2 รายการ ไม่ใช่ข้อมูลซ้ำ) — แค่ log ไว้ดูเอง
+    # ไม่แสดงให้ Admin ตัดสินใจ ไม่ block ไม่ auto-remove ใดๆ ทั้งสิ้น
+    potential_dup_mask = out.duplicated(subset=["po_number", "fc_code", "barcode"], keep=False)
+    n_potential = int(potential_dup_mask.sum())
+    if n_potential > 0:
+        print(f"[po_parser] ℹ️  พบ {n_potential} แถวที่ PO+จุดส่ง+SKU เดียวกันแต่ line_no ต่างกัน "
+              f"(potential duplicate — ยังไม่มี business rule จึงไม่ทำอะไรกับแถวเหล่านี้)")
 
     # เตือน (ไม่ raise) ถ้า unit_type ไม่ใช่ CT ตามที่ระบุไว้ใน Data Model (ข้อ 2.4)
     non_ct = out[~out["unit_type"].isin(["CT"])]
@@ -150,6 +154,36 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
 
     out.attrs["column_order"] = original_column_order
     return out
+
+
+def check_duplicate_rows(filepath: str) -> list[dict]:
+    """
+    หา "exact duplicate" (po_number+fc_code+barcode+line_no ตรงกันเป๊ะ) ในไฟล์ — เรียกก่อน import
+    จริงเสมอ (read-only ไม่แตะ DB เลย) ให้ view เอาผลไปแสดงหน้า "พบรายการที่อาจซ้ำ" ให้ Admin ตัดสินใจ
+    เอง (Continue/Stop) — คืน [] ถ้าไม่เจอเลย (กรณีส่วนใหญ่ — import ต่อได้ทันทีไม่ต้องแวะหน้านี้)
+
+    คืนค่าต่อกลุ่มที่ซ้ำ: {"po_number", "fc_code", "barcode", "item_name", "line_no", "rows": [...]}
+    "rows" คือรายละเอียดทุกแถวในกลุ่มนั้น (มีมากกว่า 1 แถวเสมอ) ให้ Admin เห็นยอดสั่งของแต่ละแถวจริง
+    """
+    df = parse_po_file(filepath)
+    dup_key_cols = ["po_number", "fc_code", "barcode", "line_no"]
+    dup_mask = df.duplicated(subset=dup_key_cols, keep=False)
+    if not dup_mask.any():
+        return []
+
+    groups = []
+    for key, group_df in df[dup_mask].groupby(dup_key_cols, dropna=False):
+        po_number, fc_code, barcode, line_no = key
+        groups.append({
+            "po_number": po_number, "fc_code": fc_code, "barcode": barcode,
+            "line_no": None if pd.isna(line_no) else int(line_no),
+            "item_name": group_df["item_name"].iloc[0],
+            "rows": [
+                {"qty_ordered": float(r["qty_ordered"]) if pd.notna(r["qty_ordered"]) else None}
+                for _, r in group_df.iterrows()
+            ],
+        })
+    return groups
 
 
 def load_po_to_db(filepath: str, production_date, po_date, imported_by: str = "admin") -> int:

@@ -78,7 +78,10 @@
                 <td class="px-3 py-2.5 sticky left-0 z-10 bg-stone-50" colspan="2">
                     รวมตะกร้าทั้งหมด: <span class="mono text-stone-800">{{ total_baskets }}</span>
                 </td>
-                <td colspan="{{ table.columns|length|add:2 }}"></td>
+                {% for col, basket_qty in columns_with_basket %}
+                <td class="px-3 py-2.5 text-right mono text-stone-700">{{ basket_qty|default:"—" }}</td>
+                {% endfor %}
+                <td colspan="2"></td>
             </tr>
         </tfoot>
         </table>

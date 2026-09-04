@@ -29,6 +29,24 @@
     </div>
 </div>
 
+{% if skipped_skus.active_skipped or skipped_skus.inactive_skipped %}
+<div class="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+    <p class="text-sm font-medium text-amber-800">รอบนี้มีสินค้าที่ไม่มีคำสั่งซื้อเลย</p>
+    {% if skipped_skus.active_skipped %}
+    <p class="text-xs text-amber-700 mt-1.5">
+        <span class="font-medium">ยังเปิดใช้งานอยู่</span> —
+        {% for item in skipped_skus.active_skipped %}{{ item.name_th }}{% if not forloop.last %}, {% endif %}{% endfor %}
+    </p>
+    {% endif %}
+    {% if skipped_skus.inactive_skipped %}
+    <p class="text-xs text-amber-700 mt-1">
+        <span class="font-medium">ปิดใช้งานอยู่ (ซ่อนแถวในไฟล์แล้ว)</span> —
+        {% for item in skipped_skus.inactive_skipped %}{{ item.name_th }}{% if not forloop.last %}, {% endif %}{% endfor %}
+    </p>
+    {% endif %}
+</div>
+{% endif %}
+
 <div class="grid gap-3 max-w-2xl">
 
     <div class="bg-white rounded-lg border border-stone-200 px-4 py-3.5 flex items-center justify-between">
@@ -39,7 +57,7 @@
             <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-100 text-red-700 text-sm">✕</span>
             {% endif %}
             <div>
-                <p class="text-sm font-medium text-stone-900">Production Plan</p>
+                <p class="text-sm font-medium text-stone-900">แพลนผลิต</p>
                 {% if plan.production_plan_status != 'success' %}
                 <p class="text-xs text-red-600 mt-0.5">{{ plan.production_plan_error }}</p>
                 {% endif %}

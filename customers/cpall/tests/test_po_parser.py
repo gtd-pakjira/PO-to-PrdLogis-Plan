@@ -8,7 +8,12 @@ import tempfile
 import openpyxl
 from django.test import SimpleTestCase
 
-from customers.cpall.logic.po_parser import REQUIRED_COLUMNS, POParseError, parse_po_file
+from customers.cpall.logic.po_parser import (
+    REQUIRED_COLUMNS,
+    POParseError,
+    check_duplicate_rows,
+    parse_po_file,
+)
 
 # แถวตัวอย่าง 1 แถว เรียงตามลำดับ REQUIRED_COLUMNS เป๊ะ
 SAMPLE_ROW = ["PO1", "27/08/2026", "28/08/2026", "10:00", "FC01", "คลังทดสอบ",
@@ -48,12 +53,33 @@ class ParsePoFileTests(SimpleTestCase):
         finally:
             os.remove(path)
 
-    def test_exact_duplicate_rows_are_deduped(self):
-        # แถวเดียวกันเป๊ะ (PO+จุดส่ง+SKU+line_no เหมือนกัน) ซ้ำ 2 ครั้ง -> ควรเหลือแค่ 1
+    def test_exact_duplicate_rows_are_kept_not_deduped(self):
+        # เปลี่ยน business rule แล้ว (PO ต้องเป็น Source of Truth) — ไม่ตัดแถวซ้ำออกอัตโนมัติอีกต่อไป
+        # เก็บไว้ทั้ง 2 แถว ให้ check_duplicate_rows() ตรวจจับแล้วให้ Admin ตัดสินใจเองแทน
         path = _make_po_excel([SAMPLE_ROW, SAMPLE_ROW])
         try:
             df = parse_po_file(path)
-            self.assertEqual(len(df), 1)
+            self.assertEqual(len(df), 2)
+        finally:
+            os.remove(path)
+
+    def test_check_duplicate_rows_detects_exact_duplicate(self):
+        path = _make_po_excel([SAMPLE_ROW, SAMPLE_ROW])
+        try:
+            groups = check_duplicate_rows(path)
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(len(groups[0]["rows"]), 2)
+        finally:
+            os.remove(path)
+
+    def test_check_duplicate_rows_empty_when_no_duplicate(self):
+        row2 = list(SAMPLE_ROW)
+        row2[6] = 2
+        row2[7] = "8859388000026"
+        path = _make_po_excel([SAMPLE_ROW, row2])
+        try:
+            groups = check_duplicate_rows(path)
+            self.assertEqual(groups, [])
         finally:
             os.remove(path)
 

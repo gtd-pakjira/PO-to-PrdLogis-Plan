@@ -1,0 +1,44 @@
+{% extends "cpall/base.html" %}
+{% block nav_po %}active{% endblock %}
+{% block title %}พบรายการที่อาจซ้ำ — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">พบรายการที่อาจซ้ำ</h1>
+    <p class="text-sm text-stone-500 mt-1">
+        ไฟล์ <span class="font-medium text-stone-700">{{ original_filename }}</span> มี
+        {{ duplicate_groups|length }} รายการที่ PO/จุดส่ง/สินค้า/ลำดับตรงกันเป๊ะ (แถวซ้ำกันทั้งหมด) —
+        ระบบยังไม่ตัดอะไรออกเลย ตรวจดูรายละเอียดด้านล่างก่อนตัดสินใจ
+    </p>
+</div>
+
+<div class="space-y-3 max-w-2xl mb-6">
+    {% for group in duplicate_groups %}
+    <div class="bg-white rounded-lg border border-amber-200 bg-amber-50/40 p-4">
+        <p class="text-sm font-medium text-stone-900">
+            PO <span class="mono">{{ group.po_number }}</span> · จุดส่ง <span class="mono">{{ group.fc_code }}</span>
+            · สินค้า <span class="mono">{{ group.barcode }}</span> ({{ group.item_name }})
+            {% if group.line_no %}· Line {{ group.line_no }}{% endif %}
+        </p>
+        <p class="text-xs text-stone-500 mt-1">
+            พบ {{ group.rows|length }} แถวที่ข้อมูลตรงกันเป๊ะ — ยอดสั่งแต่ละแถว:
+            {% for row in group.rows %}{{ row.qty_ordered|floatformat:"-2" }}{% if not forloop.last %}, {% endif %}{% endfor %}
+        </p>
+    </div>
+    {% endfor %}
+</div>
+
+<form method="post" action="{% url 'cpall:confirm_duplicates' %}" class="flex items-center gap-3">
+    {% csrf_token %}
+    <button type="submit" name="action" value="continue"
+            class="rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-800 transition disabled:opacity-70"
+            hx-disabled-elt="this">
+        ดำเนินการต่อ (นำเข้าทุกแถวตามไฟล์จริง)
+    </button>
+    <button type="submit" name="action" value="stop"
+            class="rounded-md border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-stone-600 hover:border-stone-400 transition">
+        ยกเลิก
+    </button>
+</form>
+
+{% endblock %}

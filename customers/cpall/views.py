@@ -5,7 +5,7 @@ import io
 import json
 import os
 import zipfile
-from datetime import datetime
+from datetime import date, datetime
 from urllib.parse import quote
 
 from django.http import FileResponse, Http404, HttpResponse
@@ -13,7 +13,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 
 from customers.cpall.forms import ImportPOForm, TemplateUploadForm
-from customers.cpall.logic.grouping import ReconciliationError
+from customers.cpall.logic.grouping import InactiveSkuOrderedError, ReconciliationError
 from customers.cpall.logic.location_mapping_manager import get_existing_groups, save_location_mapping
 from customers.cpall.logic.plan_regenerator import (
     PlanRegenerateError,
@@ -32,10 +32,12 @@ from customers.cpall.logic.plan_view_data import (
     get_logistic_plan_table_from_db,
     get_production_plan_table,
     get_production_plan_table_from_db,
+    get_skipped_skus,
 )
 from customers.cpall.logic.po_parser import (
     POInUseError,
     POParseError,
+    check_duplicate_rows,
     check_unknown_locations,
     check_unknown_skus,
     delete_po_import,
@@ -160,6 +162,31 @@ def import_submit(request):
                        {"success": False, "error": message, "original_filename": po_file.name})
 
     try:
+        duplicate_groups = check_duplicate_rows(saved_path)
+    except POParseError as e:
+        return error_response(f"ไฟล์ PO มีปัญหา: {e}")
+    except Exception as e:
+        return error_response(f"อ่านไฟล์ล้มเหลว: {type(e).__name__}: {e}", status=500)
+
+    if duplicate_groups:
+        # เจอรายการที่อาจซ้ำ (po_number+fc_code+barcode+line_no ตรงกันเป๊ะ) — ไม่ import ต่อทันที
+        # ให้ Admin เห็นรายละเอียดแล้วเลือกเองว่า Continue (import ทุกแถวตามไฟล์จริง ไม่ตัดอะไรออก)
+        # หรือ Stop (ยกเลิก ลบไฟล์ที่ค้างทิ้ง) — เก็บ path+วันที่ไว้ใน session (ไม่ใช่ hidden field ใน
+        # form กัน path ถูกแก้ผ่าน browser dev tools ได้) รอ Admin ตัดสินใจที่หน้า confirm_duplicates
+        request.session["pending_po_import"] = {
+            "saved_path": saved_path,
+            "production_date": production_date.isoformat(),
+            "po_date": po_date.isoformat(),
+            "original_filename": po_file.name,
+        }
+        context = {"duplicate_groups": duplicate_groups, "original_filename": po_file.name}
+        if is_htmx:
+            response = HttpResponse(status=200)
+            response["HX-Redirect"] = reverse("cpall:confirm_duplicates")
+            return response
+        return render(request, "cpall/confirm_duplicates.html", context)
+
+    try:
         po_import_id = load_po_to_db(saved_path, production_date, po_date, imported_by="web")
     except POParseError as e:
         return error_response(f"ไฟล์ PO มีปัญหา: {e}")
@@ -200,6 +227,83 @@ def import_submit(request):
         response["HX-Redirect"] = reverse("cpall:po_list")
         return response
     return redirect("cpall:po_list")
+
+
+def confirm_duplicates(request):
+    """
+    หน้า "พบรายการที่อาจซ้ำ" — Admin เลือก Continue (import ทุกแถวตามไฟล์จริง ไม่ตัดอะไรออกเลย)
+    หรือ Stop (ยกเลิก ลบไฟล์ที่ค้างทิ้ง) — path/วันที่ที่ต้องใช้เก็บไว้ใน session จาก import_submit()
+    ไม่รับผ่าน POST body เอง (กัน path ถูกแก้ผ่าน browser dev tools ได้)
+    """
+    pending = request.session.get("pending_po_import")
+    if pending is None:
+        return render(request, "cpall/plan_error.html",
+                       {"error": "ไม่พบไฟล์ที่รออยู่ (session อาจหมดอายุ) กรุณาอัปโหลดใหม่"})
+
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+        del request.session["pending_po_import"]  # ใช้ครั้งเดียวจบ ไม่ว่าจะกดปุ่มไหน
+
+        if action == "stop":
+            if os.path.exists(pending["saved_path"]):
+                os.remove(pending["saved_path"])
+            if is_htmx:
+                response = HttpResponse(status=200)
+                response["HX-Trigger"] = json.dumps(
+                    {"toast": {"message": "ยกเลิกการนำเข้าแล้ว", "level": "success"}})
+                response["HX-Redirect"] = reverse("cpall:import_form")
+                return response
+            return redirect("cpall:import_form")
+
+        # action == "continue" (หรือค่าอื่นที่ไม่ใช่ stop ก็ถือว่า continue ไปเลย ปลอดภัยกว่าปฏิเสธ
+        # การนำเข้าไปเฉยๆ โดยไม่มีเหตุผล) — import ทุกแถวจริง ไม่ตัดอะไรออกแม้จะซ้ำก็ตาม
+        production_date = date.fromisoformat(pending["production_date"])
+        po_date = date.fromisoformat(pending["po_date"])
+        try:
+            po_import_id = load_po_to_db(pending["saved_path"], production_date, po_date, imported_by="web")
+        except POParseError as e:
+            return render(request, "cpall/plan_error.html", {"error": f"ไฟล์ PO มีปัญหา: {e}"})
+        except Exception as e:
+            return render(request, "cpall/plan_error.html",
+                           {"error": f"นำเข้าล้มเหลว: {type(e).__name__}: {e}"})
+
+        if os.path.exists(pending["saved_path"]):
+            os.remove(pending["saved_path"])
+
+        # ต่อ flow เดิมเป๊ะ (เหมือน import_submit ตอนไม่มี duplicate) — เช็ค location/SKU ที่ไม่รู้จัก
+        unknown_locations = check_unknown_locations(po_import_id)
+        if unknown_locations:
+            if is_htmx:
+                response = HttpResponse(status=200)
+                response["HX-Redirect"] = reverse("cpall:resolve_locations", args=[po_import_id])
+                return response
+            return redirect("cpall:resolve_locations", po_import_id=po_import_id)
+
+        unknown_skus = check_unknown_skus(po_import_id)
+        if unknown_skus:
+            if is_htmx:
+                response = HttpResponse(status=200)
+                response["HX-Redirect"] = reverse("cpall:resolve_products", args=[po_import_id])
+                return response
+            return redirect("cpall:resolve_products", po_import_id=po_import_id)
+
+        if is_htmx:
+            response = HttpResponse(status=200)
+            response["HX-Redirect"] = reverse("cpall:po_list")
+            return response
+        return redirect("cpall:po_list")
+
+    # GET — แสดงหน้ายืนยัน (เรียก check_duplicate_rows ใหม่อีกครั้งจากไฟล์ที่ยังค้างอยู่ เผื่อ Admin
+    # รีเฟรชหน้านี้ — ไม่ query จาก session เพราะ session เก็บแค่ path ไม่ได้เก็บรายละเอียดกลุ่มที่ซ้ำ)
+    try:
+        duplicate_groups = check_duplicate_rows(pending["saved_path"])
+    except Exception:
+        duplicate_groups = []
+    return render(request, "cpall/confirm_duplicates.html", {
+        "duplicate_groups": duplicate_groups, "original_filename": pending["original_filename"],
+    })
 
 
 def resolve_locations(request, po_import_id):
@@ -406,6 +510,8 @@ def buffer_form_submit(request):
 
     try:
         result = run_plan(po_import_ids, buffer_override=buffer_override)
+    except InactiveSkuOrderedError as e:
+        return error_response(str(e), status=409)
     except ReconciliationError as e:
         return error_response(str(e), status=409)
     except Exception as e:
@@ -445,7 +551,10 @@ def view_plan(request, plan_run_id):
     if detail is None:
         return render(request, "cpall/plan_not_found.html", {"plan_run_id": plan_run_id}, status=404)
     plan_name = PlanRun.objects.get(id=plan_run_id).get_short_label()
-    return render(request, "cpall/plan_view.html", {"plan": detail, "plan_name": plan_name})
+    skipped_skus = get_skipped_skus(plan_run_id)
+    return render(request, "cpall/plan_view.html", {
+        "plan": detail, "plan_name": plan_name, "skipped_skus": skipped_skus,
+    })
 
 
 def download_production(request, plan_run_id):
@@ -738,6 +847,9 @@ def view_logistic_table(request, plan_run_id, group_name):
             for col in table["columns"]
         ]
     total_baskets = sum(row["basket_total"] or 0 for row in table["rows"])
+    basket_total_by_column = table.get("basket_total_by_column", {})  # ไม่มีถ้าเป็น fallback
+    # ไปใช้ get_logistic_plan_table() (แผนเก่ามากที่ไม่มีข้อมูลใน plan_sku_result เลย) — ปล่อยว่างไว้
+    # ก็พอ (แสดงแค่ "รวมตะกร้าทั้งหมด" แบบเดิม ไม่มีตะกร้าต่อคอลัมน์ให้แผนเก่ากลุ่มนี้)
 
     # เลข PO จริงเบื้องหลัง "PO1"/"PO2" แต่ละคอลัมน์ — เอาไว้แสดง tooltip เฉยๆ ถ้าหาไม่ได้ (เช่น PO
     # ต้นทางถูกลบไปแล้ว) ไม่ให้กระทบหน้าตารางเลย แค่ไม่มี tooltip ให้
@@ -751,10 +863,12 @@ def view_logistic_table(request, plan_run_id, group_name):
     # เตรียมคู่ (คอลัมน์, เลข PO) ไว้ล่วงหน้า — Django template lookup แบบ dict.{{ loop_var }} หา
     # key ชื่อ "loop_var" ตรงๆ ไม่ resolve ค่าตัวแปรให้ ต้องจับคู่มาก่อนแบบนี้แทน
     columns_with_po = [(col, po_number_by_column.get(col)) for col in table["columns"]]
+    # เหตุผลเดียวกัน — เตรียมคู่ (คอลัมน์, ตะกร้าต่อคอลัมน์) ไว้ล่วงหน้าด้วย
+    columns_with_basket = [(col, basket_total_by_column.get(col)) for col in table["columns"]]
 
     return render(request, "cpall/table_logistic.html", {
         "plan": detail, "table": table, "group_name": group_name, "total_baskets": total_baskets,
-        "columns_with_po": columns_with_po,
+        "columns_with_po": columns_with_po, "columns_with_basket": columns_with_basket,
     })
 
 

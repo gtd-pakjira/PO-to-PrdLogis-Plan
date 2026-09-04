@@ -34,9 +34,12 @@ class PlanRegenerateError(Exception):
 
 
 def _update_dates(ws, plan_run, col_to_sub_location):
+    """คืน dates_by_sub_location กลับไปด้วย (ให้ caller เอาไปใช้ M5 fix ต่อได้โดยไม่ต้อง query ซ้ำ —
+    ดู regenerate_production_plan_bytes() ที่ต้องใช้แก้ M5 ต่างหาก เพราะ M5 เป็น merged cell ที่บังเอิญ
+    ทับกับคอลัมน์ของ "ขอนแก่น" พอดี (M5:Q6) — ดู excel_export.py's comment เดียวกันสำหรับรายละเอียดเต็ม)"""
     po_import_ids = list(plan_run.po_imports.values_list("id", flat=True))
     if not po_import_ids:
-        return
+        return {}
     dates_by_sub_location = get_dates_by_sub_location(po_import_ids)
 
     def date_resolver(col):
@@ -49,6 +52,28 @@ def _update_dates(ws, plan_run, col_to_sub_location):
         return production_date, po_date
 
     update_date_headers(ws, date_resolver)
+    return dates_by_sub_location
+
+
+def _fix_m5_afternoon_date(ws, dates_by_sub_location):
+    """M5 ("วันที่ผลิต ... ส่งวันที่ PO ...") เป็นส่วนหนึ่งของ merged cell M5:Q6 ซึ่งบังเอิญคอลัมน์
+    M (13) ตรงกับคอลัมน์ของ "ขอนแก่น" พอดี (ลำดับจุดส่งที่ 7: G,H,I,J,K,L,M=ขอนแก่น) — date_resolver
+    ปกติ (ผูกกับ col_to_sub_location) จะเผลอเขียน M5 ด้วยวันที่ของขอนแก่น (รอบเช้า) แทนที่จะเป็นวันที่
+    ของรอบบ่าย — ***เจอบั๊กนี้จริงจากการทดสอบ P0 (2026-09-04)***: เคยแก้ไว้ใน excel_export.py แล้ว
+    (ตอนสร้างแผนครั้งแรก) แต่ลืมแก้ที่นี่ด้วย (ตอนดาวน์โหลดซ้ำ/regenerate) ทำให้ M5 ถูกต้องแค่ตอนสร้าง
+    แผนครั้งแรก แต่ผิดทุกครั้งที่ดาวน์โหลดซ้ำทีหลัง — ต้องเรียกฟังก์ชันนี้คู่กับ _update_dates() เสมอ
+    สำหรับ Production Plan เท่านั้น (Logistic Plan ไม่มี merged cell แบบนี้ ไม่ต้องเรียก)"""
+    from customers.cpall.logic.plan_view_data import RETURN_GROUP_SUB_LOCATIONS
+    afternoon_dates = None
+    for sub_loc, dates in dates_by_sub_location.items():
+        if sub_loc not in RETURN_GROUP_SUB_LOCATIONS and dates[0] is not None and dates[1] is not None:
+            afternoon_dates = dates
+            break
+    if afternoon_dates is not None:
+        update_date_headers(
+            ws, lambda col: afternoon_dates if col == 13 else None,
+            search_rows=range(1, 8), search_cols=range(13, 14),
+        )
 
 
 def regenerate_production_plan_bytes(plan_run_id: int) -> bytes:
@@ -90,7 +115,8 @@ def regenerate_production_plan_bytes(plan_run_id: int) -> bytes:
         if data["buffer_qty"] is not None:
             ws.cell(row=row + BUFFER_ROW_OFFSET, column=BUFFER_COL, value=float(data["buffer_qty"]))
 
-    _update_dates(ws, plan_run, col_to_sub_location)
+    dates_by_sub_location = _update_dates(ws, plan_run, col_to_sub_location)
+    _fix_m5_afternoon_date(ws, dates_by_sub_location)
 
     buffer = io.BytesIO()
     wb.save(buffer)
