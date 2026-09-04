@@ -284,13 +284,15 @@ def check_unknown_skus(po_import_id: int) -> list:
     """
     หาบาร์โค้ดในรอบนี้ที่ยังไม่มีใน product_master (เหมือน check_unknown_locations แต่สำหรับสินค้า) —
     ไม่มีผลต่อการคำนวณแผนเลย (product_master ใช้แค่แสดงชื่อสินค้าที่หน้ากรอกยอดเผื่อ) แต่ยังอยากให้
-    Admin กรอกไว้ให้ครบเพื่อความสมบูรณ์ของข้อมูลอ้างอิง — คืน (barcode, item_name) ต่อบาร์โค้ดที่ไม่รู้จัก
+    Admin กรอกไว้ให้ครบเพื่อความสมบูรณ์ของข้อมูลอ้างอิง — คืน (barcode, item_name, net_case_price)
+    ต่อบาร์โค้ดที่ไม่รู้จัก — ราคาเอาไว้ auto-fill ในฟอร์ม (มีอยู่แล้วในไฟล์ PO ไม่ต้องให้กรอกซ้ำ)
     """
     known_barcodes = ProductMaster.objects.values_list("barcode", flat=True)
     rows = (
         PoLine.objects.filter(po_import_id=po_import_id)
         .exclude(barcode__in=known_barcodes)
-        .values_list("barcode", "item_name")
-        .distinct()
+        .order_by("barcode")
+        .values_list("barcode", "item_name", "net_case_price")
+        .distinct("barcode")  # บาร์โค้ดเดียวกันอาจมีหลายแถว (คนละจุดส่ง) เอาแค่ตัวแทนตัวเดียวพอ
     )
     return list(rows)

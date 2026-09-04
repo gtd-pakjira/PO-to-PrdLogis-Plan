@@ -19,15 +19,26 @@
     </div>
 </div>
 
-<div class="mb-3 relative max-w-xs">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-    <input type="text" id="sku-search" placeholder="ค้นหาสินค้า..."
-           class="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600">
-</div>
+<div x-data="{ fullscreen: false }" @keydown.escape.window="fullscreen = false">
+    <div class="mb-3 flex items-center gap-2">
+        <div class="relative flex-1 max-w-xs">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input type="text" id="sku-search" placeholder="ค้นหาสินค้า..."
+                   class="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600">
+        </div>
+        <button type="button" @click="fullscreen = !fullscreen"
+                class="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-600 hover:border-stone-400 transition">
+            <svg x-show="!fullscreen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            <svg x-show="fullscreen" x-cloak viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+            <span x-text="fullscreen ? 'ออกจากเต็มจอ' : 'เต็มจอ'"></span>
+        </button>
+    </div>
 
-<div class="card overflow-auto" style="max-height: 75vh;">
-    <table class="text-sm min-w-full border-separate" style="border-spacing: 0;">
-        <thead>
+    <div class="card overflow-auto"
+         :class="fullscreen ? 'fixed inset-0 z-50 rounded-none max-h-screen' : ''"
+         :style="fullscreen ? '' : 'max-height: 75vh'">
+        <table class="text-sm min-w-full border-separate" style="border-spacing: 0;">
+            <thead>
             <tr class="text-left text-stone-500 whitespace-nowrap">
                 <th class="px-3 py-2.5 font-medium sticky left-0 top-0 z-20 bg-stone-50 border-b border-stone-200">สินค้า</th>
                 <th class="px-3 py-2.5 font-medium text-right sticky top-0 z-10 bg-stone-50 border-b border-stone-200">บรรจุ</th>
@@ -70,9 +81,10 @@
                 <td colspan="{{ table.columns|length|add:2 }}"></td>
             </tr>
         </tfoot>
-    </table>
+        </table>
+    </div>
+    <p id="no-match" class="hidden text-sm text-stone-400 text-center py-8">ไม่พบสินค้าที่ค้นหา</p>
 </div>
-<p id="no-match" class="hidden text-sm text-stone-400 text-center py-8">ไม่พบสินค้าที่ค้นหา</p>
 
 <script>
     const searchInput = document.getElementById('sku-search');

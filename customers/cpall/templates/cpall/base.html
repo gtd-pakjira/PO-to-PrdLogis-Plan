@@ -7,9 +7,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
     <style>
-        /* ซ่อน element นี้ตอนกำลังส่งคำขอ HTMX อยู่ (คู่กับ .htmx-indicator ที่ HTMX เองซ่อนไว้ปกติ
-           แล้วโชว์เฉพาะตอนกำลังส่งคำขอ) — ใช้คู่กันสลับ icon ปกติ <-> spinner ระหว่างรอผลลัพธ์ */
-        .htmx-request .hx-hide-on-load { display: none !important; }
         /* Alpine.js ไม่ได้เติม CSS นี้ให้อัตโนมัติ ต้องประกาศเอง — กัน element ที่มี x-cloak
            กระพริบโชว์ตอน page เพิ่งโหลด ก่อนที่ Alpine.js จะประมวลผล x-show เสร็จ */
         [x-cloak] { display: none !important; }

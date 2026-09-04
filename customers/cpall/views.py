@@ -256,7 +256,7 @@ def resolve_products(request, po_import_id):
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if request.method == "POST":
-        for barcode, item_name in unknown_skus:
+        for barcode, item_name, net_case_price in unknown_skus:
             name_th = request.POST.get(f"name_th_{barcode}", "").strip() or item_name
             name_en = request.POST.get(f"name_en_{barcode}", "").strip()
             pack_size_str = request.POST.get(f"pack_size_{barcode}", "").strip()
@@ -266,7 +266,8 @@ def resolve_products(request, po_import_id):
                 continue  # ยังไม่ได้กรอกอันนี้ -> ข้ามไปก่อน (ไม่บังคับ ต่างจาก location)
             try:
                 pack_size = int(pack_size_str)
-                unit_price = float(unit_price_str) if unit_price_str else None
+                # ราคาไม่ได้กรอกเอง -> ใช้ราคาจาก PO ที่ auto-fill ไว้ให้แล้ว (ถ้ามี) เป็น fallback
+                unit_price = float(unit_price_str) if unit_price_str else net_case_price
             except ValueError:
                 continue
             save_product(barcode, name_th, name_en or None, pack_size, unit_price)
