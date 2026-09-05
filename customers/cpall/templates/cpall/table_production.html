@@ -1,12 +1,12 @@
 {% extends "cpall/base.html" %}
 {% block nav_plan %}active{% endblock %}
-{% block title %}ตาราง Production Plan #{{ plan.id }} — แพลนผลิต 7-11{% endblock %}
+{% block title %}ตารางแพลนผลิต #{{ plan.id }} — แพลนผลิต 7-11{% endblock %}
 {% block content %}
 
 <div class="mb-5">
     <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับหน้าแผน #{{ plan.id }}</a>
     <div class="flex items-center justify-between mt-1">
-        <h1 class="text-xl font-semibold text-stone-900">Production Plan #{{ plan.id }}</h1>
+        <h1 class="text-xl font-semibold text-stone-900">แพลนผลิต #{{ plan.id }}</h1>
         <a href="{% url 'cpall:download_production' plan.id %}"
            class="text-sm text-emerald-700 hover:underline font-medium">ดาวน์โหลด Excel</a>
     </div>

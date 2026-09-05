@@ -406,6 +406,22 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
         msg_lines.append("  -> ไปเพิ่มแถว SKU นี้ในไฟล์เทมเพลต (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วรันใหม่")
         raise LogisticPlanError("\n".join(msg_lines))
 
+    # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในกลุ่มนี้รอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต —
+    # ซ่อนแถวไว้ (ไม่ลบจริง) กันสูตรที่ reference row number อื่นในเทมเพลตพัง — ถ้า inactive แต่ยังมี
+    # PO สั่งอยู่จริง จะไม่มาถึงจุดนี้เลย เพราะ run_plan() block ไปตั้งแต่ก่อนเรียกฟังก์ชันนี้แล้ว
+    from customers.cpall.models import ProductMaster
+    inactive_barcodes = set(
+        ProductMaster.objects.filter(is_active=False).values_list("barcode", flat=True)
+    )
+    hidden_count = 0
+    for barcode, row in header_rows.items():
+        if barcode in inactive_barcodes and barcode not in all_ordered_barcodes:
+            ws.row_dimensions[row].hidden = True
+            ws.row_dimensions[row + 1].hidden = True  # แถวรอง (ชื่ออังกฤษ/pack breakdown)
+            hidden_count += 1
+    if hidden_count:
+        print(f"[logistic_plan_export:{group_name}] ซ่อน {hidden_count} แถวสินค้าที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้")
+
     wb.save(output_path)
 
     print(f"[logistic_plan_export:{group_name}] เขียนไฟล์ {output_path} — กรอกยอดครบ {len(filled_skus)} SKU")

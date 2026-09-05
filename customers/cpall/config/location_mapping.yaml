@@ -75,12 +75,3 @@ locations:
     group: "รอบเช้าต่างจังหวัด"
     sub_location: "หาดใหญ่"
 
-  - fc_code: "FC77"
-    name_th: "คลังทดสอบ resolve"
-    group: "มหาชัย"
-    sub_location: "คลังทดสอบ resolve"
-
-  - fc_code: "FC66"
-    name_th: "คลังทดสอบ fallback"
-    group: "มหาชัย"
-    sub_location: "คลังทดสอบ fallback"

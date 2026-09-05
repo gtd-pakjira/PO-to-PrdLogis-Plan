@@ -3,9 +3,10 @@ services:
     image: mcr.microsoft.com/devcontainers/python:3.12
     volumes:
       - ../..:/workspaces:cached
-    ports:
-      - "8000:8000"
     command: sleep infinity
+    ports:
+      - "8000:8000"    # เปิดให้เครื่องอื่นใน LAN เดียวกันเข้าได้ — รัน Django ด้วย:
+                        # python manage.py runserver 0.0.0.0:8000 (ไม่ใช่ localhost:8000)
     environment:
       DB_HOST: db
       DB_PORT: "5432"

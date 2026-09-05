@@ -49,7 +49,18 @@ PP_RETURN_COL = BUFFER_COL       # ยอดคืนอยู่คอลัม
 
 # กลุ่มจุดส่งที่ใช้คำนวณ "ยอดคืน" (= ยอดเผื่อ - ยอดที่ใช้จริงในกลุ่มนี้) — จำลองจากสูตรจริงในเทมเพลต
 # "=SUM(O13-M11-N11-O11-P11-Q11)" ซึ่ง M:Q คือ 5 จุดส่งสุดท้าย (รอบเช้าต่างจังหวัด) เป๊ะ
-RETURN_GROUP_SUB_LOCATIONS = ["ขอนแก่น", "สุราษฎร์ธานี", "เชียงใหม่", "ภูเก็ต", "หาดใหญ่"]
+#
+# เดิม hardcode เป็น list ตายตัว — เปลี่ยนเป็น query สดจาก LocationMapping แทน (2025-09-05) เพราะ
+# ค่านี้ถูกใช้ซ้ำเป็น list ที่เหมือนกันเป๊ะใน 3 จุด (คำนวณยอดคืน, เลือกวันที่ M5 ตอนสร้างแผน, เลือก
+# วันที่ M5 ตอน regenerate) — ถ้า Admin เพิ่ม/ลดจุดส่งในกลุ่ม "รอบเช้าต่างจังหวัด" ผ่าน Django Admin
+# แล้วลืมแก้ constant นี้คู่กัน ยอดคืน+วันที่ M5 จะผิดเงียบๆ ทันที ไม่มี error เตือนเลย — query จาก DB
+# ตรงๆ แทน รับประกันว่าตรงกับ location_mapping เสมอไม่ว่า Admin จะแก้เมื่อไหร่ก็ตาม
+def get_return_group_sub_locations() -> list:
+    from customers.cpall.models import LocationMapping
+    return list(
+        LocationMapping.objects.filter(group="รอบเช้าต่างจังหวัด")
+        .values_list("sub_location", flat=True).distinct()
+    )
 
 
 def _pack_breakdown_text(qty, pack_size):
@@ -115,6 +126,7 @@ def get_production_plan_table(filepath: str) -> dict:
 
     col_to_sub_location = _find_sub_location_columns(ws)
     header_rows = _find_pp_sku_header_rows(ws)  # {barcode: row}, ไม่เรียงลำดับ
+    return_group_sub_locations = get_return_group_sub_locations()  # query ครั้งเดียว ไม่ query ซ้ำทุก SKU ในลูป
 
     rows = []
     for barcode, row in sorted(header_rows.items(), key=lambda kv: kv[1]):  # เรียงตามแถวในไฟล์
@@ -136,7 +148,7 @@ def get_production_plan_table(filepath: str) -> dict:
         return_qty = None
         if buffer_qty is not None:
             used_in_return_group = sum(
-                (qty_by_location.get(loc) or 0) for loc in RETURN_GROUP_SUB_LOCATIONS
+                (qty_by_location.get(loc) or 0) for loc in return_group_sub_locations
             )
             return_qty = buffer_qty - used_in_return_group
 

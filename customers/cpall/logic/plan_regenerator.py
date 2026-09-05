@@ -15,7 +15,7 @@ import io
 
 import openpyxl
 
-from customers.cpall.logic.date_utils import update_date_headers
+from customers.cpall.logic.date_utils import find_merged_date_header_column, update_date_headers
 from customers.cpall.logic.excel_export import BUFFER_COL, BUFFER_ROW_OFFSET, _find_sub_location_columns
 from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
 from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
@@ -55,25 +55,34 @@ def _update_dates(ws, plan_run, col_to_sub_location):
     return dates_by_sub_location
 
 
-def _fix_m5_afternoon_date(ws, dates_by_sub_location):
+def _fix_m5_afternoon_date(ws, dates_by_sub_location, col_to_sub_location):
     """M5 ("วันที่ผลิต ... ส่งวันที่ PO ...") เป็นส่วนหนึ่งของ merged cell M5:Q6 ซึ่งบังเอิญคอลัมน์
     M (13) ตรงกับคอลัมน์ของ "ขอนแก่น" พอดี (ลำดับจุดส่งที่ 7: G,H,I,J,K,L,M=ขอนแก่น) — date_resolver
     ปกติ (ผูกกับ col_to_sub_location) จะเผลอเขียน M5 ด้วยวันที่ของขอนแก่น (รอบเช้า) แทนที่จะเป็นวันที่
     ของรอบบ่าย — ***เจอบั๊กนี้จริงจากการทดสอบ P0 (2026-09-04)***: เคยแก้ไว้ใน excel_export.py แล้ว
     (ตอนสร้างแผนครั้งแรก) แต่ลืมแก้ที่นี่ด้วย (ตอนดาวน์โหลดซ้ำ/regenerate) ทำให้ M5 ถูกต้องแค่ตอนสร้าง
     แผนครั้งแรก แต่ผิดทุกครั้งที่ดาวน์โหลดซ้ำทีหลัง — ต้องเรียกฟังก์ชันนี้คู่กับ _update_dates() เสมอ
-    สำหรับ Production Plan เท่านั้น (Logistic Plan ไม่มี merged cell แบบนี้ ไม่ต้องเรียก)"""
-    from customers.cpall.logic.plan_view_data import RETURN_GROUP_SUB_LOCATIONS
+    สำหรับ Production Plan เท่านั้น (Logistic Plan ไม่มี merged cell แบบนี้ ไม่ต้องเรียก)
+
+    *** เจอบั๊กรอบ 2 (2025-09-05): เทมเพลตมี merged "วันที่" มากกว่า 1 จุด *** (G5:L6 ของรอบบ่าย ถูกต้อง
+    อยู่แล้ว, M5:Q6 ของรอบเช้าที่เป็นจุดมีปัญหา) — ต้องกรองด้วย col_to_sub_location ว่า column ตรงกับ
+    กลุ่มรอบเช้าจริง ไม่งั้นจะได้ merged range แรกที่เจอ (G5:L6) แทนที่จะเป็นตัวที่ต้องการแก้จริง"""
+    from customers.cpall.logic.plan_view_data import get_return_group_sub_locations
+    return_group_sub_locations = get_return_group_sub_locations()
     afternoon_dates = None
     for sub_loc, dates in dates_by_sub_location.items():
-        if sub_loc not in RETURN_GROUP_SUB_LOCATIONS and dates[0] is not None and dates[1] is not None:
+        if sub_loc not in return_group_sub_locations and dates[0] is not None and dates[1] is not None:
             afternoon_dates = dates
             break
     if afternoon_dates is not None:
-        update_date_headers(
-            ws, lambda col: afternoon_dates if col == 13 else None,
-            search_rows=range(1, 8), search_cols=range(13, 14),
+        m5_col = find_merged_date_header_column(
+            ws, row=5, col_filter=lambda c: col_to_sub_location.get(c) in return_group_sub_locations,
         )
+        if m5_col is not None:
+            update_date_headers(
+                ws, lambda col: afternoon_dates if col == m5_col else None,
+                search_rows=range(1, 8), search_cols=range(m5_col, m5_col + 1),
+            )
 
 
 def regenerate_production_plan_bytes(plan_run_id: int) -> bytes:
@@ -116,7 +125,7 @@ def regenerate_production_plan_bytes(plan_run_id: int) -> bytes:
             ws.cell(row=row + BUFFER_ROW_OFFSET, column=BUFFER_COL, value=float(data["buffer_qty"]))
 
     dates_by_sub_location = _update_dates(ws, plan_run, col_to_sub_location)
-    _fix_m5_afternoon_date(ws, dates_by_sub_location)
+    _fix_m5_afternoon_date(ws, dates_by_sub_location, col_to_sub_location)
 
     buffer = io.BytesIO()
     wb.save(buffer)

@@ -128,7 +128,3 @@ skus:
     pack_size: 8
     unit_price: 62.31
 
-  - barcode: "9999999999999"
-    name_th: "สินค้าทดสอบ (ไม่มีใน database)"
-    pack_size: 5
-    unit_price: 100.0

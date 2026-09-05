@@ -17,8 +17,9 @@ import sys
 
 import openpyxl
 
-from customers.cpall.logic.date_utils import update_date_headers
+from customers.cpall.logic.date_utils import find_merged_date_header_column, update_date_headers
 from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location
+from customers.cpall.logic.logistic_plan_export import SUB_LOCATION_LABEL_CORRECTIONS
 
 TEMPLATE_PATH = "customers/cpall/excel_templates/production_plan_template.xlsx"
 SHEET_NAME = "แพลน 7-11"
@@ -44,11 +45,10 @@ HEADER_SCAN_COL_RANGE = range(5, 25)  # ช่วงคอลัมน์ที�
 # ป้ายที่ไม่ใช่ชื่อจุดส่งย่อยจริง (ข้อความหมายเหตุที่แทรกอยู่ในแถวหัวกลุ่มของเทมเพลต) — ข้ามไปถ้าเจอ
 IGNORE_HEADER_LABELS = {"บาร์ระบุวันผลิต"}
 
-# เทมเพลตเดิมพิมพ์ชื่อจุดส่งย่อยไม่ตรงกับที่ตั้งไว้ใน location_mapping.yaml (ย่อ/พิมพ์ตก) — แก้ให้ตรงกันตรงนี้
-SUB_LOCATION_LABEL_CORRECTIONS = {
-    "สุราษร์": "สุราษฎร์ธานี",
-    "นครราขสีมา": "นครราชสีมา",  # เทมเพลตสะกดผิด (ข แทน ช)
-}
+# เทมเพลตเดิมพิมพ์ชื่อจุดส่งย่อยไม่ตรงกับที่ตั้งไว้ใน location_mapping.yaml (ย่อ/พิมพ์ตก) — แก้ให้
+# ตรงกันตรงนี้ — เดิมนิยาม dict นี้ซ้ำอีกชุดใน logistic_plan_export.py (คนละเนื้อหา ไม่ตรงกัน — ทำให้
+# เจอชื่อพิมพ์ผิดใหม่แล้วต้องจำไปแก้ 2 ที่ ลืมง่ายมาก) — รวมเป็นที่เดียวที่ logistic_plan_export.py
+# (มีรายการครบกว่า) แล้ว import มาใช้ตรงนี้แทน (2025-09-05) — ดู import ที่ต้นไฟล์
 
 # บาร์โค้ดที่เทมเพลตพิมพ์ผิด/สลับกับ SKU อื่น (พบระหว่างสร้าง sku_master.yaml)
 LEGACY_TEMPLATE_BARCODE_CORRECTIONS = {
@@ -250,6 +250,32 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
     n = update_date_headers(ws, date_resolver)
     print(f"[excel_export] อัปเดตวันที่ในหัวไฟล์ {n} จุด (แต่ละจุดใช้วันที่ของรอบ PO ที่ตัวเองสังกัด)")
 
+    # M5 (หัวไฟล์หลัก "วันที่ผลิต ... ส่งวันที่ PO ...") ไม่ได้ผูกกับจุดส่งย่อยไหนโดยเฉพาะ (เป็น header
+    # รวมทั้งไฟล์) — date_resolver ด้านบน (ที่ผูกกับ col_to_sub_location) จึงไม่เคยแก้ M5 เลย ยังคงเป็น
+    # ค่าเก่าที่ติดมากับเทมเพลตตลอด (เจอบั๊กนี้จริงจากการทดสอบ) — ใช้วันที่ของ "รอบบ่าย" เสมอ (ยืนยันกับ
+    # Admin แล้วว่ารอบเช้าต่างจังหวัดมาถึงวันเดียวกับวันที่ PO ของรอบบ่าย จึงใช้รอบบ่ายเป็นตัวแทนของทั้งไฟล์)
+    from customers.cpall.logic.plan_view_data import get_return_group_sub_locations
+    return_group_sub_locations = get_return_group_sub_locations()
+    afternoon_dates = None
+    for sub_loc, dates in dates_by_sub_location.items():
+        if sub_loc not in return_group_sub_locations and dates[0] is not None and dates[1] is not None:
+            afternoon_dates = dates
+            break
+    if afternoon_dates is not None:
+        # กรองเอาเฉพาะ merged "วันที่" ที่ column ตรงกับจุดส่งกลุ่มรอบเช้า (RETURN_GROUP) เท่านั้น —
+        # เทมเพลตนี้มี merged "วันที่" มากกว่า 1 จุด (G5:L6 ของรอบบ่าย ถูกต้องอยู่แล้วเพราะ date_resolver
+        # ด้านบนจัดการให้ตรงกับจุดส่งจริง กับ M5:Q6 ของรอบเช้าที่เป็นจุดมีปัญหา) — ถ้าไม่กรองจะได้ค่า
+        # merged range แรกที่เจอ (G5:L6) แทนที่จะเป็นตัวที่ต้องการแก้จริง (M5:Q6)
+        m5_col = find_merged_date_header_column(
+            ws, row=5, col_filter=lambda c: col_to_sub_location.get(c) in return_group_sub_locations,
+        )
+        if m5_col is not None:
+            m5_updated = update_date_headers(
+                ws, lambda col: afternoon_dates if col == m5_col else None,
+                search_rows=range(1, 8), search_cols=range(m5_col, m5_col + 1),
+            )
+            print(f"[excel_export] อัปเดต M5 (หัวไฟล์หลัก) ด้วยวันที่รอบบ่าย: {m5_updated} จุด")
+
     total_col = _find_total_column(ws)
     header_rows = _find_sku_header_rows(ws)
 
@@ -325,6 +351,27 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
             msg_lines.append(f"    - {b}")
         msg_lines.append(f"  -> ไปเพิ่มแถว SKU นี้ในไฟล์เทมเพลต {template_path} ก่อน (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วรันใหม่")
         raise ExcelExportError("\n".join(msg_lines))
+
+    # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในรอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต —
+    # ซ่อนแถวไว้ (ไม่ลบจริง) กันสูตรที่ reference row number อื่นในเทมเพลตพัง — ถ้า inactive แต่ยังมี
+    # PO สั่งอยู่จริง จะไม่มาถึงจุดนี้เลย เพราะ run_plan() block ไปตั้งแต่ก่อนเรียกฟังก์ชันนี้แล้ว
+    #
+    # Production Plan มี "4 แถวต่อ SKU" เสมอ (ชื่อไทย+ยอดสั่ง / ชื่ออังกฤษ+pack breakdown /
+    # บาร์โค้ด+ยอดเผื่อ / ยอดคืน) ต่างจาก Logistic Plan ที่มีแค่ 2 แถว — เจอบั๊กจริงจากการตรวจสอบ range
+    # C5:S86 (2026-09-04): ซ่อนแค่ 2 แถวแรกทำให้แถวยอดเผื่อ/ยอดคืน (แถวที่ 3-4) ยังโผล่ค้างอยู่ในไฟล์ที่
+    # Admin เห็น โดยไม่มีชื่อสินค้ากำกับเลย (เพราะแถวชื่อถูกซ่อนไปแล้ว) ดูแปลกและสับสนมาก
+    from customers.cpall.models import ProductMaster
+    inactive_barcodes = set(
+        ProductMaster.objects.filter(is_active=False).values_list("barcode", flat=True)
+    )
+    hidden_count = 0
+    for barcode, row in header_rows.items():
+        if barcode in inactive_barcodes and barcode not in qty_by_barcode:
+            for offset in range(4):  # ซ่อนครบทั้ง 4 แถวของ SKU นี้ ไม่ใช่แค่ 2 แถวแรก
+                ws.row_dimensions[row + offset].hidden = True
+            hidden_count += 1
+    if hidden_count:
+        print(f"[excel_export] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้ (4 แถวต่อ SKU)")
 
     wb.save(output_path)
 

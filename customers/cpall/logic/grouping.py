@@ -16,6 +16,33 @@ class ReconciliationError(Exception):
     pass
 
 
+class InactiveSkuOrderedError(Exception):
+    """PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งาน (is_active=False) ใน Django Admin อยู่ — ต้องไป active
+    สินค้านั้นก่อน ถึงจะสร้างแผนได้ (ยืนยันกับ user แล้วว่าต้อง block ไม่ใช่แค่เตือน)"""
+    pass
+
+
+def check_inactive_skus_ordered(po_import_ids) -> list[dict]:
+    """
+    หาบาร์โค้ดที่ PO รอบนี้สั่งอยู่จริง แต่ถูกปิดใช้งาน (is_active=False) ใน product_master —
+    คืน [{"barcode":, "name_th":}, ...] ว่างเปล่าถ้าไม่มีปัญหา
+    """
+    from django.db.models import Q
+
+    from customers.cpall.models import PoLine, ProductMaster
+
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    ordered_barcodes = set(
+        PoLine.objects.filter(po_import_id__in=po_import_ids).values_list("barcode", flat=True).distinct()
+    )
+    inactive = ProductMaster.objects.filter(
+        Q(barcode__in=ordered_barcodes) & Q(is_active=False)
+    ).values("barcode", "name_th")
+    return list(inactive)
+
+
 def get_grouped_quantities(po_import_ids) -> list[dict]:
     """
     คืนยอดสั่งรวมต่อ (barcode, group) สำหรับ po_import_id(s) ที่ระบุ (int เดี่ยว หรือ list)

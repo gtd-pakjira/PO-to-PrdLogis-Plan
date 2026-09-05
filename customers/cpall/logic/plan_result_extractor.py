@@ -82,6 +82,13 @@ def extract_production_plan_results(filepath: str) -> list[dict]:
         pack_size = ws.cell(row=row, column=PP_COL_PACK).value
         buffer_qty = ws.cell(row=row + BUFFER_ROW_OFFSET, column=BUFFER_COL).value
         return_qty = ws.cell(row=row + PP_RETURN_ROW_OFFSET, column=BUFFER_COL).value  # ค่าจริงจาก LibreOffice
+        if buffer_qty is None:
+            # เทมเพลตมีสูตร "ยอดคืน" อยู่ในทุก SKU เสมอ (ไม่ใช่แค่กลุ่มรอบเช้าต่างจังหวัดที่ยอดเผื่อมี
+            # ความหมายจริง) — ถ้า SKU นี้ไม่มียอดเผื่อเลย (Admin ไม่ได้กรอก/ไม่เกี่ยวข้อง) ค่า "ยอดคืน"
+            # ที่คำนวณได้จากสูตรเป็นแค่ผลข้างเคียงทางคณิตศาสตร์ (0 ลบยอดสั่งกลุ่มรอบเช้าที่ไม่เกี่ยวกับ
+            # SKU นี้เลย) ไม่มีความหมายทางธุรกิจใดๆ — เจอบั๊กนี้จริงจากการทดสอบ (return_qty=-215 ทั้งที่
+            # buffer_qty=None) ทำให้ Admin เห็นตัวเลขที่สับสน ต้องเคลียร์ทิ้งด้วยกันไม่ให้แสดงในตาราง
+            return_qty = None
         actual_production_qty = None
         if total_col is not None:
             val = ws.cell(row=row + PP_NAME_EN_ROW_OFFSET, column=total_col).value

@@ -38,11 +38,7 @@
             <div class="px-4 py-4 border-b border-stone-100">
                 <a href="/" class="flex items-center gap-2.5">
                     <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white font-bold text-[10px] tracking-tight"
-                          span style="
-                                background-image: linear-gradient(180deg, #F4811F 0%, #F4811F 20%, #ffffff 15%, #ffffff 25%, #008062 20%, #008062 70%, #ffffff 70%, #ffffff 75%, #ED2525 75%, #ED2525 100%);
-                                color: white;  
-                            ">7-11</span>
-
+                          style="background: linear-gradient(135deg, #F4811F 0%, #ED2525 55%, #008062 100%);">7-11</span>
                     <span class="font-semibold text-stone-900 text-[13.5px] leading-tight">แพลนผลิต 7-11</span>
                 </a>
             </div>
@@ -50,7 +46,7 @@
             <nav class="flex-1 px-2.5 py-3 space-y-0.5">
                 <a href="{% url 'cpall:index' %}" class="nav-item {% block nav_dashboard %}{% endblock %}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-                    แดชบอร์ด
+                    หน้าหลัก
                 </a>
                 <a href="{% url 'cpall:po_list' %}" class="nav-item {% block nav_po %}{% endblock %}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>

@@ -76,3 +76,34 @@ def update_date_headers(ws, date_resolver, search_rows=range(1, 15), search_cols
             updated += 1
 
     return updated
+
+
+def find_merged_date_header_column(ws, row: int = 5, col_filter=None) -> int | None:
+    """
+    หาคอลัมน์ anchor ของ merged cell ที่ครอบคลุม row ที่กำหนด (default 5) และมีข้อความ "วันที่" อยู่
+    — ใช้แก้ปัญหา M5 (หัวไฟล์หลัก "วันที่ผลิต...ส่งวันที่ PO...") ที่เดิม hardcode เป็น col==13 ตรงๆ
+    เพราะ M5 บังเอิญเป็น merged cell (M5:Q6) ที่ทับกับคอลัมน์ของจุดส่งย่อยตัวหนึ่งพอดี (2025-09-05) —
+    ถ้า Admin แทรกคอลัมน์ใหม่ก่อนคอลัมน์ M ในเทมเพลตทีหลัง merged cell จะเลื่อนไปคอลัมน์อื่น แต่โค้ด
+    เดิมยังหา col==13 อยู่ ทำให้วันที่หัวไฟล์ผิดเงียบๆ อีกครั้ง — หาแบบ dynamic จาก merged_cells ของ
+    ไฟล์เองแทน ไม่ hardcode เลขคอลัมน์เลย
+
+    *** สำคัญ: เทมเพลต Production Plan มี merged "วันที่" ที่ row นี้ "มากกว่า 1 จุด" จริง ***
+    (พิสูจน์แล้วจากการทดสอบ — G5:L6 ของรอบบ่าย กับ M5:Q6 ของรอบเช้าต่างจังหวัด คนละอันกัน) เพราะงั้น
+    ฟังก์ชันนี้จะคืนค่า "ตัวแรกที่เจอ" เท่านั้น ถ้าต้องการเจาะจงว่าเอาอันที่ column อยู่ในช่วงไหน
+    ให้ส่ง col_filter (function: col:int -> bool) มากรองก่อนคืนค่า — caller ต้องรู้ว่าต้องการอันไหน
+    เอง อย่าสมมติว่ามีแค่จุดเดียวเด็ดขาด (เจอบั๊กจริงจากการเขียนฟังก์ชันนี้ครั้งแรกที่ไม่กรอง — คืนค่า
+    merged cell ตัวแรกที่เจอ (G5:L6) แทนที่จะเป็น M5:Q6 ที่ต้องการจริง)
+
+    คืนค่า None ถ้าหาไม่เจอ (เช่น เทมเพลตไม่มี merged cell แบบนี้ที่ row นั้นเลย หรือกรองแล้วไม่เจอเลย)
+    """
+    for merged_range in ws.merged_cells.ranges:
+        if not (merged_range.min_row <= row <= merged_range.max_row):
+            continue
+        if merged_range.min_col == merged_range.max_col:
+            continue  # merged cell กว้างแค่คอลัมน์เดียว ไม่ใช่ header หลักแบบที่ต้องการ
+        if col_filter is not None and not col_filter(merged_range.min_col):
+            continue
+        anchor_value = ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
+        if anchor_value and "วันที่" in str(anchor_value):
+            return merged_range.min_col
+    return None

@@ -19,7 +19,12 @@ from datetime import datetime
 
 from customers.cpall.logic.db import get_cpall_customer_id
 from customers.cpall.logic.excel_export import ExcelExportError, export_production_plan
-from customers.cpall.logic.grouping import ReconciliationError, reconcile
+from customers.cpall.logic.grouping import (
+    InactiveSkuOrderedError,
+    ReconciliationError,
+    check_inactive_skus_ordered,
+    reconcile,
+)
 from customers.cpall.logic.logistic_plan_export import (
     LogisticPlanError,
     export_logistic_plan,
@@ -40,6 +45,17 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     ถ้า reconcile ผ่านแต่บางไฟล์ (Production Plan หรือ Logistic Plan บางกลุ่ม) ล้มเหลวระหว่างสร้าง
     จะไม่ raise — ใส่สถานะ "failed" ไว้ใน dict ผลลัพธ์แทน (ให้ไฟล์อื่นที่ไม่เกี่ยวข้องสร้างต่อได้)
     """
+    # ---------- ตรวจสอบสินค้าที่ถูกปิดใช้งาน ----------
+    # เช็คก่อน reconcile เลย — ถ้ามี SKU ที่ inactive แต่ PO ยังสั่งอยู่จริง (เช่น CP All ยังส่งมา แม้
+    # Admin จะปิดใช้งานไว้แล้วในระบบ) ต้อง block ทันที ไม่ให้สร้างแผนต่อ (ยืนยันกับ user แล้ว)
+    inactive_ordered = check_inactive_skus_ordered(po_import_ids)
+    if inactive_ordered:
+        names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
+        raise InactiveSkuOrderedError(
+            f"สร้างแผนไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names} — "
+            f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะสร้างแผนได้"
+        )
+
     # ---------- ตรวจสอบยอด ----------
     # เช็คก่อนสร้างโฟลเดอร์เลย — ถ้ายอดไม่ตรง (raise ทันที) จะได้ไม่มีโฟลเดอร์เปล่าค้างอยู่บนดิสก์
     recon = reconcile(po_import_ids)  # raise ReconciliationError ถ้าไม่ผ่าน (ปล่อยให้ผู้เรียนจัดการ)
@@ -277,3 +293,74 @@ def delete_plan_run(plan_run_id: int):
 
     if output_dir and os.path.isdir(output_dir):
         shutil.rmtree(output_dir)
+
+
+def get_current_buffer_by_barcode(plan_run_id: int) -> dict:
+    """ยอดเผื่อปัจจุบันของแผนนี้จริงๆ (ไม่ใช่ยอดเผื่อล่าสุดที่เคยบันทึกไว้ทั่วระบบ — ใช้ pre-fill ฟอร์ม
+    'แก้ไขยอดเผื่อ' ให้ตรงกับค่าที่แผนนี้ใช้อยู่จริงตอนนี้)"""
+    from customers.cpall.models import PlanSkuResult
+
+    rows = PlanSkuResult.objects.filter(
+        plan_run_id=plan_run_id, sheet_type="production", buffer_qty__isnull=False
+    ).values("barcode", "buffer_qty").distinct("barcode")
+    return {r["barcode"]: float(r["buffer_qty"]) for r in rows if r["buffer_qty"] is not None}
+
+
+def edit_buffer_and_regenerate(plan_run_id: int, buffer_override: dict) -> dict:
+    """
+    แก้ยอดเผื่อของแผนที่สร้างไปแล้ว แล้วคำนวณใหม่ทั้งหมด (Production Plan + Logistic Plan ทุกกลุ่ม) —
+    ใช้ plan_run_id เดิม ไม่สร้างแผนใหม่ (ไม่เปลี่ยน template_version ที่ผูกไว้ตอนสร้างครั้งแรกด้วย —
+    "แก้ยอดเผื่อ" ไม่ควรเปลี่ยนเทมเพลตที่ใช้อ้างอิง) — ลบ PlanSkuResult เก่าของแผนนี้ทิ้งก่อนคำนวณใหม่
+    เสมอ (bulk_create ไม่ใช่ update ทีละแถว) ไฟล์ Excel ที่สร้างระหว่างคำนวณลบทิ้งทันทีเหมือน run_plan()
+    ปกติ (data-first) — raise PlanRun.DoesNotExist ถ้าไม่เจอแผน, InactiveSkuOrderedError เหมือนเดิมถ้า
+    เจอ SKU inactive ที่ยังมี PO สั่งอยู่ (เช็คซ้ำ เผื่อ Admin เพิ่งปิดใช้งานหลังสร้างแผนไปแล้ว)
+    """
+    from customers.cpall.models import PlanSkuResult
+
+    plan_run = PlanRun.objects.get(id=plan_run_id)
+    po_import_ids = list(plan_run.po_imports.values_list("id", flat=True))
+
+    inactive_ordered = check_inactive_skus_ordered(po_import_ids)
+    if inactive_ordered:
+        names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
+        raise InactiveSkuOrderedError(
+            f"แก้ยอดเผื่อไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names} — "
+            f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะแก้ไขต่อได้"
+        )
+
+    output_dir = plan_run.output_dir or f"customers/cpall/data/output/{datetime.now().strftime('%Y%m%d_%H%M')}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    production_plan_path = f"{output_dir}/แพลน_7-11.xlsx"
+    production_plan_result = {"status": "success", "path": production_plan_path, "error": None}
+    try:
+        export_production_plan(po_import_ids, production_plan_path, buffer_override=buffer_override)
+    except (ExcelExportError, Exception) as e:
+        production_plan_result = {"status": "failed", "path": None, "error": str(e)}
+
+    logistic_results = {}
+    for group_name in get_group_templates():
+        if not group_has_data(po_import_ids, group_name):
+            logistic_results[group_name] = {"status": "skipped", "path": None, "error": None}
+            continue
+        logistic_path = f"{output_dir}/{group_name}.xlsx"
+        try:
+            export_logistic_plan(po_import_ids, group_name, logistic_path)
+            logistic_results[group_name] = {"status": "success", "path": logistic_path, "error": None}
+        except (LogisticPlanError, Exception) as e:
+            logistic_results[group_name] = {"status": "failed", "path": None, "error": str(e)}
+
+    # ลบผลลัพธ์เก่าของแผนนี้ทิ้งก่อนเสมอ (bulk_create ด้านล่างไม่ใช่ update — ถ้าไม่ลบก่อนจะได้แถวซ้ำ)
+    PlanSkuResult.objects.filter(plan_run_id=plan_run_id).delete()
+    extracted_ok = _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results)
+
+    if "production" in extracted_ok and production_plan_result["path"] and os.path.exists(production_plan_result["path"]):
+        os.remove(production_plan_result["path"])
+    for group_name, result in logistic_results.items():
+        if group_name in extracted_ok and result["path"] and os.path.exists(result["path"]):
+            os.remove(result["path"])
+
+    return {
+        "plan_run_id": plan_run_id, "po_import_ids": po_import_ids,
+        "production_plan": production_plan_result, "logistic_plans": logistic_results,
+    }

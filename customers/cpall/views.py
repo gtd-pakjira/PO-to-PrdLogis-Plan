@@ -9,11 +9,15 @@ from datetime import date, datetime
 from urllib.parse import quote
 
 from django.http import FileResponse, Http404, HttpResponse
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
 from customers.cpall.forms import ImportPOForm, TemplateUploadForm
-from customers.cpall.logic.grouping import InactiveSkuOrderedError, ReconciliationError
+from customers.cpall.logic.grouping import (
+    InactiveSkuOrderedError,
+    ReconciliationError,
+    check_inactive_skus_ordered,
+)
 from customers.cpall.logic.location_mapping_manager import get_existing_groups, save_location_mapping
 from customers.cpall.logic.plan_regenerator import (
     PlanRegenerateError,
@@ -22,6 +26,7 @@ from customers.cpall.logic.plan_regenerator import (
 )
 from customers.cpall.logic.plan_runner import (
     delete_plan_run,
+    edit_buffer_and_regenerate,
     get_plan_run_detail,
     list_plan_runs,
     list_plan_runs_paginated,
@@ -411,6 +416,18 @@ def new_plan_submit(request):
     if not po_import_ids:
         return error_response("ต้องเลือก PO อย่างน้อย 1 รอบ")
 
+    # เช็ค inactive SKU ที่ยังมี PO สั่งอยู่จริง "ก่อน" ไปหน้ากรอกยอดเผื่อเลย — เดิมเช็คแค่ตอน submit
+    # ยอดเผื่อ (ใน run_plan()) ทำให้ Admin ต้องกรอกยอดเผื่อครบ 19 SKU ก่อน ถึงจะรู้ว่าสร้างแผนไม่ได้
+    # เสียเวลาโดยไม่จำเป็น — ย้ายมาเช็คตรงนี้เพื่อบล็อกให้เร็วที่สุด (ยังคงเช็คซ้ำใน run_plan() ไว้ด้วย
+    # เผื่อกรณี SKU เพิ่งถูกปิดใช้งานระหว่างที่ Admin เปิดหน้ากรอกยอดเผื่อค้างไว้อยู่)
+    inactive_ordered = check_inactive_skus_ordered(po_import_ids)
+    if inactive_ordered:
+        names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
+        return error_response(
+            f"สร้างแผนไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names} — "
+            f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะสร้างแผนได้", status=409,
+        )
+
     # ไปหน้ากรอกยอดเผื่อเสมอ — ขึ้นทุกครั้งที่สร้างแผน ไม่ใช่แค่ตอนมีรอบเช้าต่างจังหวัด
     # (ยอดเผื่อเป็นข้อมูลสำคัญที่ Admin ต้องยืนยันทุกรอบ ไม่ใช่แค่กลุ่มเช้าต่างจังหวัด)
     if is_htmx:
@@ -531,6 +548,77 @@ def buffer_form_submit(request):
     return redirect("cpall:view_plan", plan_run_id=result["plan_run_id"])
 
 
+def edit_buffer_form(request, plan_run_id):
+    """หน้าแก้ยอดเผื่อของแผนที่สร้างไปแล้ว — pre-fill ด้วยยอดเผื่อปัจจุบัน "ของแผนนี้จริงๆ" (ไม่ใช่ค่า
+    ล่าสุดที่เคยบันทึกไว้ทั่วระบบแบบหน้ากรอกยอดเผื่อตอนสร้างแผนใหม่)"""
+    plan_run = get_object_or_404(PlanRun, id=plan_run_id)
+
+    import openpyxl
+
+    from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
+    from customers.cpall.logic.excel_export import TEMPLATE_PATH as PP_TEMPLATE_PATH
+    from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
+    from customers.cpall.logic.plan_runner import get_current_buffer_by_barcode
+    from customers.cpall.models import ProductMaster
+
+    wb = openpyxl.load_workbook(PP_TEMPLATE_PATH)
+    ws = wb[PP_SHEET_NAME]
+    header_rows = _find_pp_sku_header_rows(ws)
+    barcodes = [bc for bc, _ in sorted(header_rows.items(), key=lambda kv: kv[1])]
+
+    current_buffer = get_current_buffer_by_barcode(plan_run_id)
+    name_lookup = {s.barcode: s.name_th for s in ProductMaster.objects.filter(barcode__in=barcodes)}
+    sku_rows = [
+        {"barcode": bc, "name_th": name_lookup.get(bc, bc), "current_buffer": current_buffer.get(bc, 0)}
+        for bc in barcodes
+    ]
+
+    return render(request, "cpall/edit_buffer_form.html", {
+        "plan_run_id": plan_run_id, "plan_name": plan_run.get_short_label(), "sku_rows": sku_rows,
+    })
+
+
+def edit_buffer_form_submit(request, plan_run_id):
+    if request.method != "POST":
+        return redirect("cpall:view_plan", plan_run_id=plan_run_id)
+
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    def error_response(message, status=400):
+        if is_htmx:
+            response = HttpResponse(status=status)
+            response["HX-Trigger"] = json.dumps({"toast": {"message": message, "level": "error"}})
+            return response
+        return render(request, "cpall/plan_error.html", {"error": message})
+
+    buffer_override = {}
+    for key, val in request.POST.items():
+        if key.startswith("buffer_") and val.strip():
+            barcode = key[len("buffer_"):]
+            try:
+                buffer_override[barcode] = float(val)
+            except ValueError:
+                pass
+
+    try:
+        edit_buffer_and_regenerate(plan_run_id, buffer_override)
+    except PlanRun.DoesNotExist:
+        return error_response("ไม่พบแผนนี้ (อาจถูกลบไปแล้ว)", status=404)
+    except InactiveSkuOrderedError as e:
+        return error_response(str(e), status=409)
+    except Exception as e:
+        return error_response(f"แก้ยอดเผื่อล้มเหลว: {type(e).__name__}: {e}", status=500)
+
+    if is_htmx:
+        response = HttpResponse(status=200)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {"message": "อัปเดตยอดเผื่อและคำนวณแผนใหม่แล้ว", "level": "success"},
+            "replaceLocation": {"url": reverse("cpall:view_plan", args=[plan_run_id])},
+        })
+        return response
+    return redirect("cpall:view_plan", plan_run_id=plan_run_id)
+
+
 def _set_download_filename(response, filename):
     """
     ตั้งชื่อไฟล์ดาวน์โหลดแบบรองรับภาษาไทยให้ถูกต้องตามมาตรฐาน RFC 6266 (filename*=UTF-8''...)
@@ -587,8 +675,13 @@ def download_logistic(request, plan_run_id, group_name):
     if detail is None:
         raise Http404
     match = next((lp for lp in detail["logistic_plans"] if lp["group_name"] == group_name), None)
-    if match is None or not match["file_path"]:
-        raise Http404
+    if match is None:
+        raise Http404  # กลุ่มนี้ไม่มีอยู่ในระบบเลย (ชื่อกลุ่มผิด/URL ปลอม) — 404 ถูกต้องแล้ว
+    if match["status"] != "success" or not match["file_path"]:
+        # เหตุผลเดียวกับ view_logistic_table — โชว์ error message จริงแทน 404 เปล่าที่งงว่าเกิดอะไรขึ้น
+        reason = match.get("error_message") or ("ไม่มีข้อมูลของกลุ่มนี้ในรอบ PO ที่เลือก" if match["status"] == "skipped" else "ไม่ทราบสาเหตุ")
+        return render(request, "cpall/plan_error.html",
+                       {"error": f"ดาวน์โหลดกลุ่ม '{group_name}' ไม่สำเร็จ: {reason}"})
     filename = f"{PlanRun.objects.get(id=plan_run_id).get_display_name(prefix=group_name)}.xlsx"
 
     try:
@@ -677,6 +770,23 @@ def download_all_zip(request, plan_run_id):
                         content = f.read()
             if content:
                 zf.writestr(f"{plan.get_display_name(prefix=lp['group_name'])}.xlsx", content)
+
+        # แจ้งเตือนถ้ามีไฟล์ที่ขาดหายไปจาก ZIP นี้ — เดิมไม่มีการแจ้งเตือนเลย ZIP ดาวน์โหลดสำเร็จปกติ
+        # (status 200) ทั้งที่ขาดไฟล์ไปเงียบๆ Admin ไม่มีทางรู้ตัวจนกว่าจะนับไฟล์เอง (เจอบั๊กนี้จริงจาก
+        # การทดสอบ end-to-end — อันตรายกว่าเจอ error ตรงๆ เสียอีก เพราะไม่รู้ตัวว่าขาดอะไรไปบ้าง) —
+        # ใส่เป็นไฟล์ .txt แยกต่างหากในซิป ไม่กระทบไฟล์ Excel อื่นเลย
+        missing_notes = []
+        if detail["production_plan_status"] != "success":
+            missing_notes.append(f"แพลนผลิต — {detail.get('production_plan_error') or 'ไม่ทราบสาเหตุ'}")
+        for lp in detail["logistic_plans"]:
+            if lp["status"] == "failed":
+                missing_notes.append(f"แพลนกระจาย {lp['group_name']} — {lp.get('error_message') or 'ไม่ทราบสาเหตุ'}")
+        if missing_notes:
+            note_text = (
+                "ไฟล์ต่อไปนี้ไม่ได้รวมอยู่ใน ZIP นี้ (สร้างไม่สำเร็จ):\n\n"
+                + "\n\n".join(f"- {n}" for n in missing_notes)
+            )
+            zf.writestr("⚠️ อ่านก่อน - มีไฟล์ที่ขาดหายไป.txt", note_text)
 
     buffer.seek(0)
     response = HttpResponse(buffer.getvalue(), content_type="application/zip")
@@ -834,10 +944,20 @@ def view_logistic_table(request, plan_run_id, group_name):
     detail = get_plan_run_detail(plan_run_id)
     if detail is None:
         raise Http404
-    match = next((lp for lp in detail["logistic_plans"]
-                  if lp["group_name"] == group_name and lp["status"] == "success"), None)
-    if match is None:
-        raise Http404
+    lp = next((lp for lp in detail["logistic_plans"] if lp["group_name"] == group_name), None)
+    if lp is None:
+        raise Http404  # กลุ่มนี้ไม่มีอยู่ในระบบเลย (ชื่อกลุ่มผิด/URL ปลอม) — 404 ถูกต้องแล้ว
+    if lp["status"] == "skipped":
+        return render(request, "cpall/plan_error.html",
+                       {"error": f"รอบ PO ที่เลือกไว้ไม่มีข้อมูลของกลุ่ม '{group_name}' เลย"})
+    if lp["status"] == "failed":
+        # เดิมตรงนี้ raise Http404 เฉยๆ ทำให้ Admin เจอหน้า 404 เปล่าไม่รู้สาเหตุ ทั้งที่ error_message
+        # มีรายละเอียดเก็บไว้อยู่แล้วครบถ้วน (เช่น "เทมเพลตคอลัมน์ PO ไม่พอสำหรับรอบนี้") — เจอปัญหานี้
+        # จริงจากการทดสอบ end-to-end แบบเต็มวงจร (กลุ่มหนึ่งสร้างไม่สำเร็จ แต่กลุ่มอื่นสำเร็จ แล้วกด
+        # ดูตารางของกลุ่มที่ไม่สำเร็จ) — แก้ให้โชว์ error message จริงแทน
+        return render(request, "cpall/plan_error.html",
+                       {"error": f"สร้างตารางกลุ่ม '{group_name}' ไม่สำเร็จ: {lp.get('error_message') or 'ไม่ทราบสาเหตุ'}"})
+    match = lp
     table = get_logistic_plan_table_from_db(plan_run_id, group_name)
     if not table["rows"]:
         table = get_logistic_plan_table(match["file_path"], group_name)
