@@ -152,6 +152,20 @@ class LogisticGroup(models.Model):
         if self.template_key and not self.template_key.startswith("logistic_"):
             raise ValidationError({"template_key": "ต้องขึ้นต้นด้วย 'logistic_' เสมอ (เช่น 'logistic_ระยอง')"})
 
+        # ตรวจ unique (customer, group_name) เอง ก่อนจะไปชนกับ database constraint ตรงๆ — เจอบั๊กจริง
+        # (2025-09-06): customer field ถูกซ่อนจากฟอร์ม Django Admin (ดู get_exclude ด้านล่าง) ทำให้
+        # Django ModelForm's built-in unique validation มองไม่เห็น customer เลย ตรวจ unique ไม่ได้
+        # ตอน form validation จนไปชน database constraint ตรงๆ ตอน save().save_model() แล้ว crash เป็น
+        # raw IntegrityError (500 error ทั้งหน้า ไม่มี error message สวยงามให้ Admin เห็นเลย)
+        if self.group_name:
+            from customers.cpall.logic.db import get_cpall_customer_id
+            customer_id = self.customer_id or get_cpall_customer_id()
+            qs = LogisticGroup.objects.filter(customer_id=customer_id, group_name=self.group_name)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError({"group_name": f"มีกลุ่มพื้นที่ชื่อ '{self.group_name}' อยู่แล้ว"})
+
 
 class TemplateVersion(models.Model):
     """
@@ -321,6 +335,21 @@ class PoRequiredColumn(models.Model):
     def __str__(self):
         return self.column_name
 
+    def clean(self):
+        # ตรวจ unique (customer, column_name) เอง — เหตุผลเดียวกับ LogisticGroup.clean() (customer
+        # field ถูกซ่อนจากฟอร์ม Django Admin ทำให้ built-in unique validation มองไม่เห็น ไปชน database
+        # constraint ตรงๆ แล้ว crash เป็น raw IntegrityError แทน — 2025-09-06)
+        if self.column_name:
+            from django.core.exceptions import ValidationError
+
+            from customers.cpall.logic.db import get_cpall_customer_id
+            customer_id = self.customer_id or get_cpall_customer_id()
+            qs = PoRequiredColumn.objects.filter(customer_id=customer_id, column_name=self.column_name)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError({"column_name": f"มีคอลัมน์ชื่อ '{self.column_name}' อยู่แล้ว"})
+
 
 class ProductionPlanConfig(models.Model):
     """
@@ -342,3 +371,10 @@ class ProductionPlanConfig(models.Model):
 
     def __str__(self):
         return self.sheet_name
+
+    def clean(self):
+        # เผื่อกรณีแปลกๆ ที่ Admin เข้าหน้า "เพิ่ม" ตรงๆ ผ่าน URL (ข้าม has_add_permission ที่ซ่อนปุ่ม
+        # ไว้แล้วปกติ) — ป้องกัน IntegrityError แบบเดียวกับ LogisticGroup/PoRequiredColumn (2025-09-06)
+        if not self.pk and ProductionPlanConfig.objects.exists():
+            from django.core.exceptions import ValidationError
+            raise ValidationError("มีตั้งค่า Production Plan อยู่แล้ว แก้ไขแถวที่มีอยู่แทนการเพิ่มใหม่")

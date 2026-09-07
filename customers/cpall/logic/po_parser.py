@@ -142,6 +142,21 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
     out = out.dropna(subset=["po_number", "barcode"])
     out = out[out["po_number"].str.strip() != ""]
 
+    # เช็คว่าตัวเลขไม่เกินขอบเขตที่ database รองรับ (NUMERIC(10,2) เก็บได้สูงสุด 99,999,999.99) — เจอ
+    # บั๊กจริงจากการทดสอบ (2025-09-06): ถ้าไฟล์ PO มีค่าเกินขอบเขตนี้ (เช่น พิมพ์ตัวเลขผิดเพิ่มเลขศูนย์
+    # เกิน) ระบบจะ crash ตอนเขียนลง database ด้วย raw error ของ PostgreSQL เอง ("DataError: numeric
+    # field overflow") ซึ่งไม่มีทางเป็นมิตรกับ Admin เลย (เป็นภาษาเทคนิคล้วนๆ) — เช็คตรงนี้ก่อนเพื่อ
+    # แจ้ง error ที่อ่านเข้าใจได้แทน (ไม่น่าเกิดขึ้นจริงในข้อมูล CP All ปกติ แต่ป้องกันไว้เผื่อพิมพ์ผิด)
+    MAX_NUMERIC_10_2 = 99_999_999.99
+    for col_name, col_label in [("qty_ordered", "Ordered Quantity"), ("net_case_price", "Net Case Price")]:
+        too_large = out[out[col_name].abs() > MAX_NUMERIC_10_2]
+        if len(too_large) > 0:
+            examples = too_large[["po_number", "fc_code", "barcode", col_name]].head(3).to_dict("records")
+            raise POParseError(
+                f"คอลัมน์ '{col_label}' มีค่าเกินขอบเขตที่ระบบรองรับ (สูงสุด {MAX_NUMERIC_10_2:,.2f}) "
+                f"— ตรวจสอบว่าพิมพ์ตัวเลขผิดหรือไม่ ตัวอย่างแถวที่ผิดปกติ: {examples}"
+            )
+
     # ไม่ตัดแถวซ้ำออกอัตโนมัติอีกต่อไป (เปลี่ยน business rule แล้ว — PO ต้องเป็น Source of Truth เสมอ
     # ไม่ลบข้อมูลอะไรโดย Admin ไม่อนุมัติ) — เดิมตรงนี้เคยตัดแถวที่ซ้ำกันเป๊ะ (po_number+fc_code+
     # barcode+line_no) ออกอัตโนมัติ ตอนนี้ย้าย logic ตรวจจับไปไว้ที่ check_duplicate_rows() แยกต่างหาก

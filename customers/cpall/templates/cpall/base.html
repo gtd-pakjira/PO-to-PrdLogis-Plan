@@ -85,16 +85,30 @@
         </div>
     </div>
 
-    <!-- Loading overlay — คลุมกลางจอตอนกำลังส่งคำขอ HTMX ที่ใช้เวลานาน (เช่น สร้างแผน ต้องรอ
-         LibreOffice คำนวณสูตรจริง) — ดักฟัง HTMX's global event htmx:beforeRequest/afterRequest เอง
-         (ไม่ผูกกับปุ่มใดปุ่มหนึ่งโดยเฉพาะ ใช้ได้กับทุกจุดในเว็บอัตโนมัติ) หน่วงเวลา 250ms ก่อนโชว์
+    <!-- Loading overlay — คลุมกลางจอตอนกำลังส่งคำขอ HTMX ที่ใช้เวลานาน (เช่น สร้างแผน/คำนวณแผนใหม่
+         ต้องรอ LibreOffice คำนวณสูตรจริง) — ดักฟัง HTMX's global event htmx:beforeRequest/afterRequest
+         เอง (ไม่ผูกกับปุ่มใดปุ่มหนึ่งโดยเฉพาะ ใช้ได้กับทุกจุดในเว็บอัตโนมัติ) หน่วงเวลา 250ms ก่อนโชว์
          กัน request เร็วๆ (เช่น ค้นหาในตาราง) กระพริบจอโดยไม่จำเป็น และ "afterRequest" ยกเลิก timer
-         เสมอไม่ว่า request จะสำเร็จ/ล้มเหลว กันเคส "ค้างตลอดไป" ที่เคยเจอกับ spinner แบบเดิม -->
+         เสมอไม่ว่า request จะสำเร็จ/ล้มเหลว กันเคส "ค้างตลอดไป" ที่เคยเจอกับ spinner แบบเดิม
+
+         *** เพิ่มข้อความเตือนถ้ารอนานเกิน 3 วิ (2025-09-06) *** — วัดเวลาจริงพบว่า "แก้ไขยอดเผื่อ"
+         (คำนวณ Production+Logistic Plan ใหม่ทั้งหมด) ใช้เวลาถึง ~10 วิ ข้อความเดิม "กำลังดำเนินการ"
+         เฉยๆ ทำให้ผู้ใช้ไม่รู้ว่าต้องรอนานแค่ไหน อาจคิดว่าปุ่มไม่ทำงานแล้วกดซ้ำ/รีเฟรชหน้า (ดูเหมือน
+         ระบบ "ค้าง"/"วนไปมา") — ใช้ generic mechanism นี้ (ไม่ผูกกับ endpoint ใดโดยเฉพาะ) ครอบคลุมทุก
+         จุดที่อาจใช้เวลานานเหมือนกัน (เช่น สร้างแผนครั้งแรกก็ใช้เวลานานพอกัน) -->
     <div x-data="{
             visible: false,
+            message: 'กำลังดำเนินการ กรุณารอสักครู่...',
             timer: null,
-            onStart() { this.timer = setTimeout(() => { this.visible = true }, 250) },
-            onEnd() { clearTimeout(this.timer); this.visible = false }
+            slowTimer: null,
+            onStart() {
+                this.message = 'กำลังดำเนินการ กรุณารอสักครู่...'
+                this.timer = setTimeout(() => { this.visible = true }, 250)
+                this.slowTimer = setTimeout(() => {
+                    this.message = 'ระบบกำลังคำนวณแผนใหม่ อาจใช้เวลาถึง 10 วินาที กรุณารอสักครู่...'
+                }, 3000)
+            },
+            onEnd() { clearTimeout(this.timer); clearTimeout(this.slowTimer); this.visible = false }
          }"
          @htmx:before-request.window="onStart()"
          @htmx:after-request.window="onEnd()"
@@ -107,7 +121,7 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
             </svg>
-            <span class="text-sm font-medium text-stone-700">กำลังดำเนินการ กรุณารอสักครู่...</span>
+            <span class="text-sm font-medium text-stone-700" x-text="message"></span>
         </div>
     </div>
 
@@ -169,10 +183,27 @@
 
         // ล้าง checkbox PO ทุกครั้งที่กลับมาหน้านี้ด้วย back/forward — กัน checkbox ค้างจากรอบก่อน
         // (pageshow ยิงทุกครั้งที่หน้าแสดง รวมถึงตอนดึงจาก bfcache ต่างจาก load ที่ยิงแค่ครั้งแรก)
-        window.addEventListener('pageshow', function () {
+        window.addEventListener('pageshow', function (event) {
+            // event.persisted = true หมายถึงหน้านี้ถูกดึงมาจาก bfcache (ไม่ใช่โหลดใหม่จริง) — ใช้คู่กับ
+            // "goBackAfterSave" event ด้านล่าง (หน้าแก้ไขยอดเผื่อ) ที่เรียก history.back() แทน
+            // window.location.replace() — history.back() ทำให้ไม่มี URL ซ้อนกันใน history เลย (กด
+            // "กลับ" ที่หน้าแผนแล้วไปตามที่มาจริงเสมอ ไม่ว่าจะมาจากหน้าแรกหรือหน้ารายการแผน) แต่มีความ
+            // เสี่ยงว่า browser อาจโชว์หน้าเดิมจาก bfcache (ตัวเลขเก่าก่อนคำนวณใหม่) แทนที่จะดึงข้อมูลสด
+            // — บังคับ reload จริงทุกครั้งที่ตรวจพบว่ามาจาก bfcache กันปัญหานี้ (2025-09-06)
+            if (event.persisted) {
+                window.location.reload();
+                return;
+            }
             document.querySelectorAll('input[name="po_import_ids"]').forEach(function (cb) {
                 cb.checked = false;
             });
+        });
+
+        // ใช้คู่กับหน้าแก้ไขยอดเผื่อ — หลังบันทึกสำเร็จ เรียก history.back() แทน location.replace()
+        // เพื่อไม่ให้มี URL หน้าแผนซ้อนกัน 2 ชั้นใน history (ปัญหาเดิม: กด "กลับ" ที่หน้าแผนครั้งแรก
+        // ดูเหมือนไม่ขยับเพราะมีหน้าแผน URL เดียวกันซ้อนอยู่ ต้องกด 2 ครั้งถึงจะไปหน้าที่มาจริง)
+        document.body.addEventListener('goBackAfterSave', function () {
+            history.back();
         });
     </script>
 </body>

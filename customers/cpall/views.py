@@ -171,7 +171,9 @@ def import_submit(request):
     except POParseError as e:
         return error_response(f"ไฟล์ PO มีปัญหา: {e}")
     except Exception as e:
-        return error_response(f"อ่านไฟล์ล้มเหลว: {type(e).__name__}: {e}", status=500)
+        # ไฟล์ผิดประเภท (เช่น ไม่ใช่ .xlsx จริง) เป็นความผิดพลาดของผู้ใช้ (เลือกไฟล์ผิด) ไม่ใช่ระบบ
+        # พังเอง — ใช้ 400 แทน 500 เพื่อให้ log/monitoring แยกแยะได้ถูกต้อง (เจอจากการทดสอบ 2025-09-06)
+        return error_response(f"อ่านไฟล์ล้มเหลว: {type(e).__name__}: {e}", status=400)
 
     if duplicate_groups:
         # เจอรายการที่อาจซ้ำ (po_number+fc_code+barcode+line_no ตรงกันเป๊ะ) — ไม่ import ต่อทันที
@@ -635,7 +637,7 @@ def edit_buffer_form_submit(request, plan_run_id):
         response = HttpResponse(status=200)
         response["HX-Trigger"] = json.dumps({
             "toast": {"message": "อัปเดตยอดเผื่อและคำนวณแผนใหม่แล้ว", "level": "success"},
-            "replaceLocation": {"url": reverse("cpall:view_plan", args=[plan_run_id])},
+            "goBackAfterSave": {},
         })
         return response
     return redirect("cpall:view_plan", plan_run_id=plan_run_id)
