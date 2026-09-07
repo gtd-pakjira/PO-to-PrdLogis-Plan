@@ -16,23 +16,18 @@ import openpyxl
 import pandas as pd
 
 from customers.cpall.logic.db import get_cpall_customer_id
-from customers.cpall.models import LocationMapping, PlanRun, PoImport, PoLine, ProductMaster
+from customers.cpall.models import LocationMapping, PlanRun, PoImport, PoLine, PoRequiredColumn, ProductMaster
 
-# คอลัมน์ที่ต้องมีใน PO Export — ถ้าไม่ครบ ให้หยุดทันที (ตาม FR-1 / UC-1 exception)
-REQUIRED_COLUMNS = [
-    "Purchase Order Number",
-    "Purchase Order Date",
-    "Delivery Date",
-    "Delivery Time",
-    "Delivery Location Number",
-    "Delivery Location",
-    "Line Item Number",
-    "Item Number (Product Code)",
-    "Item Name ",          # หมายเหตุ: ไฟล์ต้นฉบับมีช่องว่างท้ายชื่อคอลัมน์นี้จริง
-    "Ordered Quantity",
-    "Unit Type ",          # เช่นกัน มีช่องว่างท้าย
-    "Net Case Price",
-]
+
+def get_required_columns() -> list:
+    """
+    คอลัมน์ที่ต้องมีใน PO Export — ถ้าไม่ครบ ให้หยุดทันที (ตาม FR-1 / UC-1 exception)
+
+    เดิม hardcode เป็น list ตรงๆ ในโค้ด แล้วย้ายไป YAML แล้วย้ายมาเป็นตารางนี้แทน (2025-09-05) —
+    ให้ Admin แก้ผ่านหน้า Django Admin panel ได้ตรงๆ ไม่ต้องแตะไฟล์/โค้ด/deploy ใหม่เลย — query จาก DB
+    สดทุกครั้งที่เรียก (ไม่ cache) ให้ Admin แก้แล้วเห็นผลทันที
+    """
+    return list(PoRequiredColumn.objects.values_list("column_name", flat=True))
 
 
 class POParseError(Exception):
@@ -101,7 +96,15 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
 
     df = pd.read_excel(filepath, sheet_name=0, dtype=object)
 
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    required_columns = get_required_columns()
+    # เทียบแบบไม่สนใจช่องว่างหัว/ท้าย (Admin พิมพ์ชื่อคอลัมน์ธรรมดาใน Admin panel ไม่ต้องรู้เรื่อง
+    # trailing space ที่ไฟล์ต้นฉบับจาก CP All มีจริงในบางคอลัมน์ เช่น "Item Name ") — หมายเหตุสำคัญ:
+    # นี่แก้ปัญหาแค่ตอน "ตรวจสอบว่าคอลัมน์ครบไหม" เท่านั้น ไม่ได้ทำให้ดึงข้อมูลจริง (โค้ดด้านล่างที่ทำ
+    # out["..."] = df["ชื่อคอลัมน์เป๊ะ"]) ยืดหยุ่นตามไปด้วย — คอลัมน์ที่มีอยู่แล้วในระบบยังต้องมีชื่อ
+    # เป๊ะตามที่โค้ดคาดไว้เสมอ (ดู comment ข้างล่าง) การแก้ผ่าน Admin panel มีประโยชน์แค่ตอน CP All
+    # "เพิ่ม/ลบ" คอลัมน์ทั้งคอลัมน์ ไม่ใช่ตอน "เปลี่ยนชื่อ" คอลัมน์ที่มีอยู่แล้ว
+    actual_columns_stripped = {str(c).strip(): c for c in df.columns}
+    missing = [c for c in required_columns if c.strip() not in actual_columns_stripped]
     if missing:
         raise POParseError(
             f"ไฟล์ PO ขาดคอลัมน์ที่จำเป็น: {missing}\n"
@@ -109,6 +112,12 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
         )
 
     out = pd.DataFrame()
+    # หมายเหตุ: ชื่อคอลัมน์ที่ hardcode ตรงนี้ (รวม trailing space ของ "Item Name "/"Unit Type ")
+    # เป็นคนละเรื่องกับ PoRequiredColumn (Admin panel) ด้านบน — Admin panel ควบคุมแค่ "รายชื่อคอลัมน์
+    # ที่ต้องมี" (validation) เท่านั้น ไม่ได้ทำให้การ map ข้อมูลตรงนี้ยืดหยุ่นตามไปด้วย ถ้า Admin ไป
+    # เปลี่ยนชื่อคอลัมน์ที่มีอยู่แล้วในระบบผ่าน Admin panel (ไม่ใช่แค่เพิ่ม/ลบคอลัมน์ใหม่) การดึงข้อมูล
+    # แถวนี้จะยังหาคอลัมน์ชื่อเดิมไม่เจอ — ต้องแก้โค้ดตรงนี้คู่กันเสมอถ้าจะรองรับ Admin เปลี่ยนชื่อคอลัมน์
+    # ที่มีอยู่แล้วจริงๆ (ยังไม่ได้ทำ เพราะเป็น refactor ใหญ่กว่านี้มาก)
     out["po_number"] = df["Purchase Order Number"].astype(str).str.strip()
     out["po_date"] = df["Purchase Order Date"].apply(_to_date)
     out["delivery_date"] = df["Delivery Date"].apply(_to_date)

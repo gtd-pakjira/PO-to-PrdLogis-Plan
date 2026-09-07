@@ -178,6 +178,70 @@ BEGIN
     END IF;
 END $$;
 
+-- ---------- config ของ Production Plan (เดิม SHEET_NAME hardcode เป็น "แพลน 7-11" ในโค้ด — ย้ายมาไว้
+-- นี่แทน 2025-09-05) — มีแค่แถวเดียวต่อลูกค้า (Production Plan เป็นเทมเพลตเดียว ไม่ใช่หลายกลุ่มแบบ
+-- Logistic Plan) — Admin แก้ชื่อ sheet ผ่าน Django Admin panel ได้ถ้าเทมเพลตเปลี่ยนชื่อ sheet ----------
+CREATE TABLE IF NOT EXISTS production_plan_config (
+    id              SERIAL PRIMARY KEY,
+    customer_id     INTEGER NOT NULL REFERENCES customer(id),
+    sheet_name      VARCHAR(100) NOT NULL,     -- ชื่อ sheet ที่ใช้จริงในไฟล์เทมเพลต Production Plan
+    created_at      TIMESTAMP DEFAULT now(),
+    UNIQUE (customer_id)
+);
+
+DO $$
+DECLARE
+    cpall_id INTEGER;
+BEGIN
+    SELECT id INTO cpall_id FROM customer WHERE code = 'cpall';
+    IF cpall_id IS NOT NULL THEN
+        INSERT INTO production_plan_config (customer_id, sheet_name)
+        VALUES (cpall_id, 'แพลน 7-11')
+        ON CONFLICT (customer_id) DO NOTHING;
+    END IF;
+END $$;
+
+
+CREATE TABLE IF NOT EXISTS po_required_column (
+    id              SERIAL PRIMARY KEY,
+    customer_id     INTEGER NOT NULL REFERENCES customer(id),
+    column_name     VARCHAR(200) NOT NULL,     -- ชื่อคอลัมน์ตรงตามไฟล์ PO ต้นฉบับ — เทียบแบบไม่สนใจ
+                                                -- ช่องว่างหัว/ท้ายตอนใช้งานจริง (ดู po_parser.py) กัน
+                                                -- ปัญหาที่ผ่านมา (ไฟล์ CP All มีช่องว่างต่อท้ายบางชื่อ
+                                                -- คอลัมน์จริง Admin ไม่ต้องรู้เรื่องนี้ พิมพ์ชื่อธรรมดา
+                                                -- ไม่ต้องเผื่อช่องว่างเองก็ได้)
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP DEFAULT now(),
+    UNIQUE (customer_id, column_name)
+);
+CREATE INDEX IF NOT EXISTS idx_po_required_column_customer ON po_required_column(customer_id);
+
+-- seed 12 คอลัมน์เดิมที่เคย hardcode ไว้ — ทำครั้งเดียว ไม่ทับถ้ามีอยู่แล้ว
+DO $$
+DECLARE
+    cpall_id INTEGER;
+BEGIN
+    SELECT id INTO cpall_id FROM customer WHERE code = 'cpall';
+    IF cpall_id IS NOT NULL THEN
+        INSERT INTO po_required_column (customer_id, column_name, display_order)
+        VALUES
+            (cpall_id, 'Purchase Order Number', 1),
+            (cpall_id, 'Purchase Order Date', 2),
+            (cpall_id, 'Delivery Date', 3),
+            (cpall_id, 'Delivery Time', 4),
+            (cpall_id, 'Delivery Location Number', 5),
+            (cpall_id, 'Delivery Location', 6),
+            (cpall_id, 'Line Item Number', 7),
+            (cpall_id, 'Item Number (Product Code)', 8),
+            (cpall_id, 'Item Name', 9),
+            (cpall_id, 'Ordered Quantity', 10),
+            (cpall_id, 'Unit Type', 11),
+            (cpall_id, 'Net Case Price', 12)
+        ON CONFLICT (customer_id, column_name) DO NOTHING;
+    END IF;
+END $$;
+
+
 -- ---------- Template Versioning (Phase 1.6 sub-phase 1) ----------
 -- เก็บทุกเวอร์ชันของไฟล์เทมเพลตที่เคยอัปโหลดถาวร (ต่างจากของเดิมที่เก็บ backup แค่ 1 ชั้น) —
 -- ให้กู้คืนไปเวอร์ชันไหนก็ได้ในประวัติ และให้แผนแต่ละแผนอ้างอิงได้ว่าตอนสร้างใช้เทมเพลตเวอร์ชันไหน

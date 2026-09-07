@@ -22,7 +22,15 @@ from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_locatio
 from customers.cpall.logic.logistic_plan_export import SUB_LOCATION_LABEL_CORRECTIONS
 
 TEMPLATE_PATH = "customers/cpall/excel_templates/production_plan_template.xlsx"
-SHEET_NAME = "แพลน 7-11"
+def get_sheet_name() -> str:
+    """
+    ชื่อ sheet ในไฟล์เทมเพลต Production Plan — เดิม hardcode เป็น constant ตรงๆ (2025-09-05 ย้ายมา
+    query จาก ProductionPlanConfig แทน) ให้ Admin แก้ผ่าน Django Admin panel ได้ถ้าเทมเพลตเปลี่ยนชื่อ
+    sheet ไม่ต้องแก้โค้ด/deploy ใหม่ — query สดทุกครั้งที่เรียก ไม่ cache
+    """
+    from customers.cpall.models import ProductionPlanConfig
+    config = ProductionPlanConfig.objects.first()
+    return config.sheet_name if config else "แพลน 7-11"  # fallback เผื่อยังไม่เคย seed (ไม่ควรเกิดจริง)
 
 
 class ExcelExportError(Exception):
@@ -232,7 +240,7 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
         qty_by_barcode.setdefault(row["barcode"], {})[row["sub_location"]] = row["qty_case_ordered"]
 
     wb = openpyxl.load_workbook(template_path)
-    ws = wb[SHEET_NAME]
+    ws = wb[get_sheet_name()]
 
     col_to_sub_location = _find_sub_location_columns(ws)
 

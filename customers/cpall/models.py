@@ -291,3 +291,54 @@ class PlanRunLogisticFile(models.Model):
 
     def __str__(self):
         return f"{self.group_name} ({self.status})"
+
+
+class PoRequiredColumn(models.Model):
+    """
+    คอลัมน์ที่ต้องมีในไฟล์ PO Export จาก CP All (เดิม hardcode ในโค้ด แล้วย้ายไป YAML แล้วย้ายมาเป็น
+    ตารางนี้แทน 2025-09-05 — ให้ Admin แก้ผ่านหน้า Django Admin ได้ตรงๆ ไม่ต้องแตะไฟล์/โค้ดเลย) —
+    ถ้า CP All เปลี่ยนชื่อคอลัมน์ในไฟล์ export ของเขา Admin มาแก้ที่นี่ได้เลย
+
+    หมายเหตุ: ไม่ต้องพิมพ์ช่องว่างต่อท้ายชื่อคอลัมน์เอง แม้ไฟล์ต้นฉบับจริงจะมีช่องว่างต่อท้ายบางชื่อ
+    คอลัมน์ก็ตาม (ความผิดพลาดของ CP All เอง) — ระบบเทียบชื่อคอลัมน์แบบไม่สนใจช่องว่างหัว/ท้ายเสมอ
+    (ดู po_parser.py) พิมพ์ชื่อคอลัมน์ตรงๆ ธรรมดาได้เลย
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
+    column_name = models.CharField(max_length=200, verbose_name="ชื่อคอลัมน์")
+    display_order = models.IntegerField(default=0, verbose_name="ลำดับแสดงผล")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "po_required_column"
+        managed = False
+        verbose_name = "คอลัมน์ที่ต้องมีในไฟล์ PO"
+        verbose_name_plural = "คอลัมน์ที่ต้องมีในไฟล์ PO"
+        ordering = ["display_order", "column_name"]
+        constraints = [
+            models.UniqueConstraint(fields=["customer", "column_name"], name="po_required_column_customer_name_key"),
+        ]
+
+    def __str__(self):
+        return self.column_name
+
+
+class ProductionPlanConfig(models.Model):
+    """
+    ตั้งค่าของ Production Plan (เดิม SHEET_NAME hardcode ในโค้ด แล้วย้ายมาที่นี่แทน 2025-09-05) —
+    มีแค่แถวเดียวต่อลูกค้า (Production Plan เป็นเทมเพลตเดียว ไม่ใช่หลายกลุ่มแบบ Logistic Plan)
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
+    sheet_name = models.CharField(max_length=100, verbose_name="ชื่อ Sheet ในไฟล์เทมเพลต Production Plan")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "production_plan_config"
+        managed = False
+        verbose_name = "ตั้งค่า Production Plan"
+        verbose_name_plural = "ตั้งค่า Production Plan"
+        constraints = [
+            models.UniqueConstraint(fields=["customer"], name="production_plan_config_customer_key"),
+        ]
+
+    def __str__(self):
+        return self.sheet_name

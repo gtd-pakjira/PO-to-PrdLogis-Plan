@@ -26,10 +26,10 @@ from customers.cpall.logic.excel_export import (
     COL_NAME as PP_COL_NAME,
 )
 from customers.cpall.logic.excel_export import (
-    SHEET_NAME as PP_SHEET_NAME,
+    _find_sku_header_rows as _find_pp_sku_header_rows,
 )
 from customers.cpall.logic.excel_export import (
-    _find_sku_header_rows as _find_pp_sku_header_rows,
+    get_sheet_name as get_pp_sheet_name,
 )
 from customers.cpall.logic.logistic_plan_export import (
     _find_column_labels,
@@ -122,7 +122,7 @@ def get_production_plan_table(filepath: str) -> dict:
     }
     """
     wb = openpyxl.load_workbook(filepath)
-    ws = wb[PP_SHEET_NAME]
+    ws = wb[get_pp_sheet_name()]
 
     col_to_sub_location = _find_sub_location_columns(ws)
     header_rows = _find_pp_sku_header_rows(ws)  # {barcode: row}, ไม่เรียงลำดับ
@@ -314,14 +314,18 @@ def get_logistic_plan_table_from_db(plan_run_id: int, group_name: str) -> dict:
     }
 
 
-def get_skipped_skus(plan_run_id: int) -> dict:
+def get_skipped_skus(plan_run_id: int) -> list:
     """
-    คืน {"active_skipped": [...], "inactive_skipped": [...]} — SKU ในเทมเพลต Production Plan ที่ PO
-    รอบนี้ไม่ได้สั่งเลย (grand_total = 0 หรือ None) แยกตามสถานะ active/inactive ใน ProductMaster
-    ตอนนี้ (ไม่ใช่ตอนสร้างแผน — ถ้า Admin เปลี่ยนสถานะทีหลัง ผลตรงนี้จะเปลี่ยนตามด้วย เพราะ query สด
-    ทุกครั้งที่เปิดหน้า ไม่ได้ snapshot ไว้ตอนสร้างแผน) — ใช้แสดง banner แจ้งเตือนในหน้า plan detail
-    เฉยๆ ไม่บล็อกอะไร ไม่ต้องมี business rule ตายตัวว่าควรทำยังไงกับ SKU เหล่านี้ (ยังไม่มีคำตอบจาก
-    Admin) — แค่ให้ Admin เห็นก่อนดาวน์โหลดไปใช้จริงว่ามีอะไรถูกข้ามไปบ้าง
+    คืน [{"barcode":, "name_th":}, ...] — SKU ในเทมเพลต Production Plan ที่ยัง active อยู่ (เปิดใช้งาน
+    ใน ProductMaster) แต่ PO รอบนี้ไม่ได้สั่งเลย (grand_total = 0 หรือ None) — query สดทุกครั้งที่เปิด
+    หน้า ไม่ได้ snapshot ไว้ตอนสร้างแผน — ใช้แสดง banner แจ้งเตือนในหน้า plan detail เฉยๆ ไม่บล็อกอะไร
+
+    *** สินค้าที่ inactive ไม่รวมอยู่ในผลลัพธ์นี้เลย (ตัดออกตั้งแต่ 2025-09-05) *** — เดิมเคยแยกเป็น
+    "active_skipped"/"inactive_skipped" 2 กลุ่มแล้วแสดงทั้งคู่ในหน้าเว็บ แต่สินค้าที่ inactive และไม่มี
+    PO สั่งถูก "ซ่อนแถว" (hidden=True) ในไฟล์ไปแล้วอยู่แล้ว (ดู excel_export.py) การซ่อนแถวคือการจัดการ
+    เรื่องนี้ไปแล้ว ไม่ควรถูกเอามาเตือนซ้ำอีกว่า "ไม่มีคำสั่งซื้อ" — สร้างความสับสนให้ Admin โดยไม่จำเป็น
+    (การซ่อนแถวไม่ได้ลบข้อมูลออกจากไฟล์ แค่ทำให้มองไม่เห็นตอนเปิดไฟล์ — extraction ยังอ่านค่าได้ปกติ
+    เหมือนแถวทั่วไป ทำให้ก่อนแก้ตรงนี้ inactive SKU ยังโผล่มาเตือนอยู่)
     """
     from customers.cpall.models import PlanSkuResult, ProductMaster
 
@@ -333,16 +337,14 @@ def get_skipped_skus(plan_run_id: int) -> dict:
 
     skipped_barcodes = [b for b, info in by_barcode.items() if not info["grand_total"]]
     if not skipped_barcodes:
-        return {"active_skipped": [], "inactive_skipped": []}
+        return []
 
     inactive_set = set(
         ProductMaster.objects.filter(barcode__in=skipped_barcodes, is_active=False)
         .values_list("barcode", flat=True)
     )
 
-    active_skipped, inactive_skipped = [], []
-    for b in sorted(skipped_barcodes):
-        item = {"barcode": b, "name_th": by_barcode[b]["name_th"]}
-        (inactive_skipped if b in inactive_set else active_skipped).append(item)
-
-    return {"active_skipped": active_skipped, "inactive_skipped": inactive_skipped}
+    return [
+        {"barcode": b, "name_th": by_barcode[b]["name_th"]}
+        for b in sorted(skipped_barcodes) if b not in inactive_set
+    ]

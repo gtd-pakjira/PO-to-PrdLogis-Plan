@@ -17,8 +17,8 @@ import openpyxl
 
 from customers.cpall.logic.date_utils import find_merged_date_header_column, update_date_headers
 from customers.cpall.logic.excel_export import BUFFER_COL, BUFFER_ROW_OFFSET, _find_sub_location_columns
-from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
 from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
+from customers.cpall.logic.excel_export import get_sheet_name as get_pp_sheet_name
 from customers.cpall.logic.grouping import get_dates_by_sub_location
 from customers.cpall.logic.logistic_plan_export import (
     _find_column_labels,
@@ -103,11 +103,13 @@ def regenerate_production_plan_bytes(plan_run_id: int) -> bytes:
 
     by_barcode = {}
     for r in results:
-        entry = by_barcode.setdefault(r.barcode, {"buffer_qty": r.buffer_qty, "qty_by_col": {}})
+        entry = by_barcode.setdefault(
+            r.barcode, {"buffer_qty": r.buffer_qty, "qty_by_col": {}, "grand_total": r.grand_total}
+        )
         entry["qty_by_col"][r.column_label] = r.qty
 
     wb = openpyxl.load_workbook(plan_run.production_template_version.file_path)
-    ws = wb[PP_SHEET_NAME]
+    ws = wb[get_pp_sheet_name()]
 
     col_to_sub_location = _find_sub_location_columns(ws)
     sub_location_to_col = {v: k for k, v in col_to_sub_location.items()}
@@ -123,6 +125,31 @@ def regenerate_production_plan_bytes(plan_run_id: int) -> bytes:
                 ws.cell(row=row, column=col, value=float(qty))
         if data["buffer_qty"] is not None:
             ws.cell(row=row + BUFFER_ROW_OFFSET, column=BUFFER_COL, value=float(data["buffer_qty"]))
+
+    # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในรอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต — ซ่อน
+    # แถวไว้ (ไม่ลบจริง) เหมือนกับตอนสร้างแผนครั้งแรก (ดู excel_export.py) — *** เจอบั๊กจริง
+    # (2025-09-05): ตอนสร้างแผนครั้งแรกซ่อนถูกต้อง แต่ตอนดาวน์โหลดซ้ำ/regenerate (ฟังก์ชันนี้) ไม่เคยมี
+    # logic นี้เลย ทำให้ไฟล์ที่ Admin ดาวน์โหลดจริง (ผ่านฟังก์ชันนี้เสมอ ไม่ใช่ไฟล์ตอนสร้างแผนที่ถูกลบ
+    # ทิ้งไปแล้วตาม data-first) ยังโผล่แถวสินค้าปิดใช้งานเป็นแถวปกติพร้อมค่า 0 — เหมือนบั๊ก M5 เป๊ะ
+    # (แก้จุดสร้างแผนแต่ลืมแก้จุด regenerate) ***
+    from customers.cpall.models import ProductMaster
+    inactive_barcodes = set(
+        ProductMaster.objects.filter(is_active=False).values_list("barcode", flat=True)
+    )
+    hidden_count = 0
+    for barcode, row in header_rows.items():
+        data = by_barcode.get(barcode)
+        # "ไม่มี PO สั่งเลย" ต้องเช็คจาก grand_total (ยอดรวมจริงจาก PO ต้นทาง) ไม่ใช่แค่ "ไม่มีแถวใน
+        # by_barcode" เพราะ by_barcode มาจาก PlanSkuResult ที่มีแถวของทุก SKU ในเทมเพลตอยู่แล้วเสมอ
+        # (extraction insert ให้ครบทุก SKU ไม่ว่าจะมีคำสั่งซื้อจริงหรือไม่) — เจอบั๊กนี้ตอนเขียนโค้ดนี้
+        # เอง (เช็คผิดเป็น "not in by_barcode" ซึ่งเป็น False เสมอ ไม่เคยซ่อนอะไรเลย)
+        no_order = data is None or not data["grand_total"]
+        if barcode in inactive_barcodes and no_order:
+            for offset in range(4):
+                ws.row_dimensions[row + offset].hidden = True
+            hidden_count += 1
+    if hidden_count:
+        print(f"[plan_regenerator] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้ (4 แถวต่อ SKU)")
 
     dates_by_sub_location = _update_dates(ws, plan_run, col_to_sub_location)
     _fix_m5_afternoon_date(ws, dates_by_sub_location, col_to_sub_location)
@@ -196,6 +223,25 @@ def regenerate_logistic_plan_bytes(plan_run_id: int, group_name: str) -> bytes:
             col = label_to_col.get(label)
             if col is not None and qty is not None:
                 ws.cell(row=row, column=col, value=float(qty))
+
+    # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในกลุ่มนี้รอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต
+    # — ซ่อนแถวไว้เหมือนตอนสร้างแผนครั้งแรก (ดู logistic_plan_export.py) *** เจอบั๊กจริง (2025-09-05):
+    # เหมือนกับ Production Plan เป๊ะ — ซ่อนถูกต้องตอนสร้างแผนครั้งแรก แต่ไม่เคยซ่อนเลยตอนดาวน์โหลดซ้ำ/
+    # regenerate (ฟังก์ชันนี้) *** — Logistic Plan มีแค่ 2 แถวต่อ SKU (ต่างจาก Production Plan ที่มี 4)
+    from customers.cpall.models import ProductMaster
+    inactive_barcodes = set(
+        ProductMaster.objects.filter(is_active=False).values_list("barcode", flat=True)
+    )
+    hidden_count = 0
+    for barcode, row in header_rows.items():
+        data = by_barcode.get(barcode)
+        no_order = data is None or not any(v for v in data.values() if v)
+        if barcode in inactive_barcodes and no_order:
+            ws.row_dimensions[row].hidden = True
+            ws.row_dimensions[row + 1].hidden = True
+            hidden_count += 1
+    if hidden_count:
+        print(f"[plan_regenerator:{group_name}] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้")
 
     col_to_sub_location = {col: sub_loc for col, (sub_loc, _) in col_labels.items()}
     _update_dates(ws, plan_run, col_to_sub_location)

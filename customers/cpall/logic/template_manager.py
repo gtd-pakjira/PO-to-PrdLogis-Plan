@@ -20,10 +20,10 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 
 from customers.cpall.logic.db import get_cpall_customer_id
-from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
 from customers.cpall.logic.excel_export import TEMPLATE_PATH as PP_TEMPLATE_PATH
 from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
 from customers.cpall.logic.excel_export import _find_sub_location_columns, _find_total_column
+from customers.cpall.logic.excel_export import get_sheet_name as get_pp_sheet_name
 from customers.cpall.logic.logistic_plan_export import (
     _find_line_no_column,
     _find_qty_column_range,
@@ -53,14 +53,14 @@ def get_template_registry() -> dict:
     registry = {
         "production_plan": {
             "path": PP_TEMPLATE_PATH,
-            "label": "Production Plan (แพลน 7-11)",
+            "label": "แพลนผลิต",
             "kind": "production",
         }
     }
     for group_name, (path, _) in get_group_templates().items():
         registry[f"logistic_{group_name}"] = {
             "path": path,
-            "label": f"Logistic Plan — {group_name}",
+            "label": f"แพลนกระจาย — {group_name}",
             "kind": "logistic",
             "group": group_name,
         }
@@ -88,7 +88,7 @@ def get_template_grid(key: str, sheet_name: str = None, max_rows: int = 120, max
     wb = openpyxl.load_workbook(path, data_only=False)  # data_only=False สำคัญมาก — เอาไว้เห็นสูตรดิบ
 
     if info["kind"] == "production":
-        default_sheet = PP_SHEET_NAME
+        default_sheet = get_pp_sheet_name()
     else:
         _, default_sheet = get_group_templates()[info["group"]]
 
@@ -135,11 +135,12 @@ def validate_template(key: str, filepath: str) -> dict:
         raise TemplateValidationError(f"เปิดไฟล์ไม่ได้ (ไม่ใช่ไฟล์ .xlsx ที่ถูกต้อง): {e}")
 
     if info["kind"] == "production":
-        if PP_SHEET_NAME not in wb.sheetnames:
+        pp_sheet_name = get_pp_sheet_name()
+        if pp_sheet_name not in wb.sheetnames:
             raise TemplateValidationError(
-                f"ไม่พบชีตชื่อ '{PP_SHEET_NAME}' ในไฟล์ — เช็คว่าไม่ได้เปลี่ยนชื่อชีตตอนแก้ไฟล์"
+                f"ไม่พบชีตชื่อ '{pp_sheet_name}' ในไฟล์ — เช็คว่าไม่ได้เปลี่ยนชื่อชีตตอนแก้ไฟล์"
             )
-        ws = wb[PP_SHEET_NAME]
+        ws = wb[pp_sheet_name]
         try:
             col_to_sub = _find_sub_location_columns(ws)
             total_col = _find_total_column(ws)

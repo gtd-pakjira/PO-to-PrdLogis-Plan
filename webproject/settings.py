@@ -35,7 +35,8 @@ if env_file.exists():
 SECRET_KEY = env("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env.bool("DEBUG", default=True)
+DEBUG = env.bool("DEBUG", default=False)  # ปลอดภัยไว้ก่อนถ้าไม่มี .env/ไม่ได้ตั้งค่าไว้เลย — ดู
+# .env.example สำหรับคำอธิบายเต็ม (เคย default=True มาก่อน เปลี่ยนก่อนขึ้น V1 จริง 2025-09-05)
 
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["*"])
 

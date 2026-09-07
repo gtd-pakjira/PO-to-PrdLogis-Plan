@@ -23,8 +23,8 @@ from customers.cpall.logic.excel_export import (
     _find_total_column,
 )
 from customers.cpall.logic.excel_export import COL_NAME as PP_COL_NAME
-from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
 from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
+from customers.cpall.logic.excel_export import get_sheet_name as get_pp_sheet_name
 from customers.cpall.logic.logistic_plan_export import (
     _find_column_labels,
     _find_line_no_column,
@@ -66,7 +66,7 @@ def extract_production_plan_results(filepath: str) -> list[dict]:
     เป็น list ของ dict พร้อมเก็บลง plan_sku_result (sheet_type='production')
     """
     wb = load_calculated_workbook(filepath)
-    ws = wb[PP_SHEET_NAME]
+    ws = wb[get_pp_sheet_name()]
 
     col_to_sub_location = _find_sub_location_columns(ws)
     header_rows = _find_pp_sku_header_rows(ws)

@@ -450,12 +450,12 @@ def redirect_to_buffer_form(request, po_import_ids):
 def buffer_form(request):
     import openpyxl
 
-    from customers.cpall.logic.excel_export import (
-        SHEET_NAME as PP_SHEET_NAME,
-    )
     from customers.cpall.logic.excel_export import TEMPLATE_PATH as PP_TEMPLATE_PATH
     from customers.cpall.logic.excel_export import (
         _find_sku_header_rows as _find_pp_sku_header_rows,
+    )
+    from customers.cpall.logic.excel_export import (
+        get_sheet_name as get_pp_sheet_name,
     )
     from customers.cpall.models import PlanSkuResult, ProductMaster
 
@@ -464,13 +464,24 @@ def buffer_form(request):
     if not po_import_ids:
         return render(request, "cpall/plan_error.html", {"error": "ไม่พบรอบ PO ที่เลือกไว้"})
 
-    # ดึง SKU จาก Production Plan template (ครบ 19 ตัว เรียงตามลำดับในแผนผลิต) —
-    # เดิมดึงจากเทมเพลตรอบเช้าต่างจังหวัด (18 ตัว) ซึ่งขาดพุทราจีนและไม่ตรงกับ Production Plan
+    # ดึง SKU จาก ProductMaster ที่ยัง active อยู่เป็นหลัก (Database = source of truth) — เดิมดึงจาก
+    # Production Plan template ตรงๆ ทำให้เพิ่ม SKU ใหม่ผ่าน Django Admin แล้วไม่ขึ้นในฟอร์มนี้เลย (ต้อง
+    # ไปเพิ่มแถวในไฟล์ template ตรงๆ ถึงจะขึ้น) กลับหัวกลับหางกับที่ควรเป็น — แก้ให้ ProductMaster (DB)
+    # เป็นตัวตัดสินว่า "มี SKU อะไรบ้าง" ส่วน Template ใช้แค่หาว่าแถวไหนอยู่ตรงไหน (คนละหน้าที่กัน) —
+    # SKU ที่ active ใน DB แต่ไม่มีแถวใน Template เลย ไม่แสดงในฟอร์ม (ไม่มีที่เก็บค่าจริง) แต่เก็บไว้
+    # แจ้งเตือน Admin ว่าขาดอะไรไป (2025-09-05)
     wb = openpyxl.load_workbook(PP_TEMPLATE_PATH)
-    ws = wb[PP_SHEET_NAME]
-    header_rows = _find_pp_sku_header_rows(ws)
-    # เรียงตามตำแหน่งแถวในไฟล์ (ตามลำดับใน Production Plan จริง)
-    barcodes = [bc for bc, _ in sorted(header_rows.items(), key=lambda kv: kv[1])]
+    ws = wb[get_pp_sheet_name()]
+    header_rows = _find_pp_sku_header_rows(ws)  # {barcode: row} — เอาไว้เรียงลำดับ + เช็คว่ามีแถวจริง
+
+    active_barcodes = set(ProductMaster.objects.filter(is_active=True).values_list("barcode", flat=True))
+    barcodes_in_template = set(header_rows.keys())
+    # เรียงตามตำแหน่งแถวในไฟล์ (ตามลำดับใน Production Plan จริง) — เอาเฉพาะที่ active ใน DB ด้วย
+    barcodes = [
+        bc for bc, _ in sorted(header_rows.items(), key=lambda kv: kv[1])
+        if bc in active_barcodes
+    ]
+    missing_in_template = active_barcodes - barcodes_in_template  # active ใน DB แต่ไม่มีแถวจริง
 
     # default ยอดเผื่อ: ดึงจาก buffer_qty ล่าสุดที่เคยบันทึกไว้ใน plan_sku_result —
     # ไม่ใช่จากไฟล์เทมเพลต (ซึ่งเป็นค่าเก่าที่ Admin กรอกไว้ครั้งแรก ไม่ใช่ล่าสุด)
@@ -490,11 +501,15 @@ def buffer_form(request):
         {"barcode": bc, "name_th": name_lookup.get(bc, bc), "default_buffer": default_buffer.get(bc, 0)}
         for bc in barcodes
     ]
+    missing_names = list(
+        ProductMaster.objects.filter(barcode__in=missing_in_template).values_list("name_th", flat=True)
+    )
 
     return render(request, "cpall/buffer_form.html", {
         "po_import_ids": po_import_ids,
         "po_import_ids_str": po_import_ids_str,
         "sku_rows": sku_rows,
+        "missing_names": missing_names,
     })
 
 
@@ -555,16 +570,23 @@ def edit_buffer_form(request, plan_run_id):
 
     import openpyxl
 
-    from customers.cpall.logic.excel_export import SHEET_NAME as PP_SHEET_NAME
     from customers.cpall.logic.excel_export import TEMPLATE_PATH as PP_TEMPLATE_PATH
     from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
+    from customers.cpall.logic.excel_export import get_sheet_name as get_pp_sheet_name
     from customers.cpall.logic.plan_runner import get_current_buffer_by_barcode
     from customers.cpall.models import ProductMaster
 
     wb = openpyxl.load_workbook(PP_TEMPLATE_PATH)
-    ws = wb[PP_SHEET_NAME]
+    ws = wb[get_pp_sheet_name()]
     header_rows = _find_pp_sku_header_rows(ws)
-    barcodes = [bc for bc, _ in sorted(header_rows.items(), key=lambda kv: kv[1])]
+
+    # เหตุผลเดียวกับ buffer_form() — ดึง SKU จาก ProductMaster (DB) ที่ active เป็นหลัก ไม่ใช่จาก
+    # Template ตรงๆ (2025-09-05)
+    active_barcodes = set(ProductMaster.objects.filter(is_active=True).values_list("barcode", flat=True))
+    barcodes = [
+        bc for bc, _ in sorted(header_rows.items(), key=lambda kv: kv[1])
+        if bc in active_barcodes
+    ]
 
     current_buffer = get_current_buffer_by_barcode(plan_run_id)
     name_lookup = {s.barcode: s.name_th for s in ProductMaster.objects.filter(barcode__in=barcodes)}

@@ -1,21 +1,42 @@
 """
 test_po_parser.py — เทส parse_po_file() (อ่าน+ตรวจสอบ+ตัดข้อมูลซ้ำ) ด้วยไฟล์ Excel จำลองที่สร้างขึ้น
 เองในเทส (ไม่ใช้ไฟล์จริงของลูกค้า) ไม่แตะ database เลย (parse_po_file ไม่คุยกับ DB)
+
+หมายเหตุ: get_required_columns() ตอนนี้ query จาก PoRequiredColumn (DB) แล้ว — mock ไว้ทั้งไฟล์ (แทนที่
+จะให้ query DB จริง) เพราะ test class นี้เป็น SimpleTestCase (ห้าม query DB) เหมือนทุก test class
+อื่นในโปรเจกต์ (โมเดลทั้งหมด managed=False ไม่มีตารางให้ query ใน test database เลย)
 """
 import os
 import tempfile
+from unittest import mock
 
 import openpyxl
 from django.test import SimpleTestCase
 
 from customers.cpall.logic.po_parser import (
-    REQUIRED_COLUMNS,
     POParseError,
     check_duplicate_rows,
     parse_po_file,
 )
 
-# แถวตัวอย่าง 1 แถว เรียงตามลำดับ REQUIRED_COLUMNS เป๊ะ
+# เดิมคือ REQUIRED_COLUMNS hardcode ในโค้ด — ตอนนี้ย้ายไป DB (PoRequiredColumn) แล้ว ใช้ค่าเดียวกัน
+# นี้ mock แทนตอนทดสอบ (ดู FAKE_REQUIRED_COLUMNS ด้านล่าง)
+FAKE_REQUIRED_COLUMNS = [
+    "Purchase Order Number",
+    "Purchase Order Date",
+    "Delivery Date",
+    "Delivery Time",
+    "Delivery Location Number",
+    "Delivery Location",
+    "Line Item Number",
+    "Item Number (Product Code)",
+    "Item Name ",          # หมายเหตุ: ไฟล์ต้นฉบับมีช่องว่างท้ายชื่อคอลัมน์นี้จริง
+    "Ordered Quantity",
+    "Unit Type ",          # เช่นกัน มีช่องว่างท้าย
+    "Net Case Price",
+]
+
+# แถวตัวอย่าง 1 แถว เรียงตามลำดับ FAKE_REQUIRED_COLUMNS เป๊ะ
 SAMPLE_ROW = ["PO1", "27/08/2026", "28/08/2026", "10:00", "FC01", "คลังทดสอบ",
               1, "8859388000025", "องุ่นดำ", 10, "CT", 21.5]
 
@@ -24,7 +45,7 @@ def _make_po_excel(rows, omit_column=None):
     """สร้างไฟล์ .xlsx ชั่วคราวตามคอลัมน์ที่ระบบต้องการ คืน path ให้ (ลบเองหลังใช้)"""
     wb = openpyxl.Workbook()
     ws = wb.active
-    headers = [c for c in REQUIRED_COLUMNS if c != omit_column]
+    headers = [c for c in FAKE_REQUIRED_COLUMNS if c != omit_column]
     ws.append(headers)
     for row in rows:
         ws.append(row)
@@ -34,8 +55,9 @@ def _make_po_excel(rows, omit_column=None):
     return path
 
 
+@mock.patch("customers.cpall.logic.po_parser.get_required_columns", return_value=FAKE_REQUIRED_COLUMNS)
 class ParsePoFileTests(SimpleTestCase):
-    def test_missing_required_column_raises(self):
+    def test_missing_required_column_raises(self, mock_get_cols):
         path = _make_po_excel([], omit_column="Ordered Quantity")
         try:
             with self.assertRaises(POParseError):
@@ -43,7 +65,7 @@ class ParsePoFileTests(SimpleTestCase):
         finally:
             os.remove(path)
 
-    def test_normal_rows_parsed_correctly(self):
+    def test_normal_rows_parsed_correctly(self, mock_get_cols):
         path = _make_po_excel([SAMPLE_ROW])
         try:
             df = parse_po_file(path)
@@ -53,7 +75,7 @@ class ParsePoFileTests(SimpleTestCase):
         finally:
             os.remove(path)
 
-    def test_exact_duplicate_rows_are_kept_not_deduped(self):
+    def test_exact_duplicate_rows_are_kept_not_deduped(self, mock_get_cols):
         # เปลี่ยน business rule แล้ว (PO ต้องเป็น Source of Truth) — ไม่ตัดแถวซ้ำออกอัตโนมัติอีกต่อไป
         # เก็บไว้ทั้ง 2 แถว ให้ check_duplicate_rows() ตรวจจับแล้วให้ Admin ตัดสินใจเองแทน
         path = _make_po_excel([SAMPLE_ROW, SAMPLE_ROW])
@@ -63,7 +85,7 @@ class ParsePoFileTests(SimpleTestCase):
         finally:
             os.remove(path)
 
-    def test_check_duplicate_rows_detects_exact_duplicate(self):
+    def test_check_duplicate_rows_detects_exact_duplicate(self, mock_get_cols):
         path = _make_po_excel([SAMPLE_ROW, SAMPLE_ROW])
         try:
             groups = check_duplicate_rows(path)
@@ -72,7 +94,7 @@ class ParsePoFileTests(SimpleTestCase):
         finally:
             os.remove(path)
 
-    def test_check_duplicate_rows_empty_when_no_duplicate(self):
+    def test_check_duplicate_rows_empty_when_no_duplicate(self, mock_get_cols):
         row2 = list(SAMPLE_ROW)
         row2[6] = 2
         row2[7] = "8859388000026"
@@ -83,7 +105,7 @@ class ParsePoFileTests(SimpleTestCase):
         finally:
             os.remove(path)
 
-    def test_distinct_rows_not_removed(self):
+    def test_distinct_rows_not_removed(self, mock_get_cols):
         row2 = list(SAMPLE_ROW)
         row2[6] = 2  # line_no ต่างกัน -> ไม่ใช่แถวซ้ำ ไม่ควรถูกตัด
         row2[7] = "8859388000026"
@@ -94,7 +116,7 @@ class ParsePoFileTests(SimpleTestCase):
         finally:
             os.remove(path)
 
-    def test_row_with_empty_barcode_is_dropped(self):
+    def test_row_with_empty_barcode_is_dropped(self, mock_get_cols):
         row = list(SAMPLE_ROW)
         row[7] = None  # ไม่มีบาร์โค้ด -> เป็นแถวว่าง/สรุปท้ายไฟล์ ควรถูกตัดทิ้ง
         path = _make_po_excel([row])

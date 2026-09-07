@@ -35,46 +35,64 @@
 
 {% if po_imports %}
 <div class="card overflow-hidden">
-    <table class="w-full text-sm">
-        <thead>
-            <tr class="border-b border-stone-200 bg-stone-50 text-left text-stone-500">
-                <th class="px-4 py-2.5"></th>
-                <th class="px-4 py-2.5">#</th>
-                <th class="px-4 py-2.5">ไฟล์</th>
-                <th class="px-4 py-2.5">วันที่ผลิต</th>
-                <th class="px-4 py-2.5">วันที่ PO</th>
-                <th class="px-4 py-2.5 text-right">แถว</th>
-                <th class="px-4 py-2.5"></th>
-            </tr>
-        </thead>
-        <tbody class="divide-y divide-stone-100">
-            {% for po in po_imports %}
-            <tr class="card-row transition">
-                <td class="px-4 py-2.5">
-                    <input type="checkbox" name="po_import_ids" value="{{ po.id }}" form="quick-plan-form"
-                           class="rounded border-stone-300 text-emerald-700 focus:ring-emerald-600 focus:ring-offset-0">
-                </td>
-                <td class="px-4 py-2.5 mono text-stone-400">{{ po.id }}</td>
-                <td class="px-4 py-2.5 text-stone-800">
-                    <a href="{% url 'cpall:view_po_detail' po.id %}" class="hover:text-emerald-700 hover:underline">{{ po.display_filename }}</a>
-                </td>
-                <td class="px-4 py-2.5 text-stone-600">{{ po.production_date|date:"d/m/Y" }}</td>
-                <td class="px-4 py-2.5 text-stone-600">{{ po.po_date|date:"d/m/Y" }}</td>
-                <td class="px-4 py-2.5 text-right mono text-stone-600">{{ po.total_rows|default:"—" }}</td>
-                <td class="px-4 py-2.5 text-right">
-                    <form hx-post="{% url 'cpall:delete_po_import' po.id %}"
-                          hx-confirm="ลบ PO นี้ถาวรเลยไหม? (ถ้าเคยใช้สร้างแผนแล้วจะลบไม่ได้)"
-                          hx-target="closest tr" hx-swap="outerHTML swap:200ms">
-                        {% csrf_token %}
-                        <button type="submit" class="text-stone-400 hover:text-red-600 transition" title="ลบ">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                        </button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <colgroup>
+                <col style="width: 48px;">
+                <col style="width: 60px;">
+                <col style="min-width: 250px;">
+                <col style="width: 110px;">
+                <col style="width: 110px;">
+                <col style="width: 70px;">
+                <col style="width: 48px;">
+            </colgroup>
+            <thead>
+                <tr class="border-b border-stone-200 bg-stone-50 text-left text-stone-500">
+                    <th class="px-4 py-2.5"></th>
+                    <th class="px-4 py-2.5">#</th>
+                    <th class="px-4 py-2.5">ไฟล์</th>
+                    <th class="px-4 py-2.5">วันที่ผลิต</th>
+                    <th class="px-4 py-2.5">วันที่ PO</th>
+                    <th class="px-4 py-2.5 text-right">แถว</th>
+                    <th class="px-4 py-2.5"></th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-stone-100">
+                {% for po in po_imports %}
+                <!-- เพิ่ม align-middle ตรง tr เพื่อบังคับทุกคอลัมน์จัดกึ่งกลางแนวตั้งพร้อมกัน -->
+                <tr class="card-row transition align-middle">
+                    <td class="px-4 py-3 text-center align-middle">
+                        <input type="checkbox" name="po_import_ids" value="{{ po.id }}" form="quick-plan-form"
+                               class="rounded border-stone-300 text-emerald-700 focus:ring-emerald-600 focus:ring-offset-0 block mx-auto">
+                    </td>
+                    <td class="px-4 py-3 mono text-stone-400 align-middle">{{ po.id }}</td>
+                    
+                    <td class="px-4 py-3 text-stone-800 max-w-xs align-middle">
+                        <a href="{% url 'cpall:view_po_detail' po.id %}" 
+                           class="hover:text-emerald-700 hover:underline line-clamp-2 block leading-snug"
+                           title="{{ po.display_filename }}">
+                            {{ po.display_filename }}
+                        </a>
+                    </td>
+
+                    <td class="px-4 py-3 text-stone-600 align-middle">{{ po.production_date|date:"d/m/Y" }}</td>
+                    <td class="px-4 py-3 text-stone-600 align-middle">{{ po.po_date|date:"d/m/Y" }}</td>
+                    <td class="px-4 py-3 text-right mono text-stone-600 align-middle">{{ po.total_rows|default:"—" }}</td>
+                    <td class="px-4 py-3 text-right align-middle">
+                        <form hx-post="{% url 'cpall:delete_po_import' po.id %}"
+                              hx-confirm="ลบ PO นี้ถาวรเลยไหม? (ถ้าเคยใช้สร้างแผนแล้วจะลบไม่ได้)"
+                              hx-target="closest tr" hx-swap="outerHTML swap:200ms">
+                            {% csrf_token %}
+                            <button type="submit" class="text-stone-400 hover:text-red-600 transition inline-flex items-center justify-center" title="ลบ">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
 {% include "cpall/_pagination.html" with base_qs=base_qs %}
