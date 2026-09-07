@@ -128,3 +128,8 @@ skus:
     pack_size: 8
     unit_price: 62.31
 
+
+  - barcode: "8859388001060"
+    name_th: "แอปเปิ้ลเจ้าหญิง 200 กรัม"
+    pack_size: 10
+    unit_price: 33.8
