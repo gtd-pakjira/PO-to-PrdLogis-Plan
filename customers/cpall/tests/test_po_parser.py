@@ -117,11 +117,28 @@ class ParsePoFileTests(SimpleTestCase):
             os.remove(path)
 
     def test_row_with_empty_barcode_is_dropped(self, mock_get_cols):
-        row = list(SAMPLE_ROW)
-        row[7] = None  # ไม่มีบาร์โค้ด -> เป็นแถวว่าง/สรุปท้ายไฟล์ ควรถูกตัดทิ้ง
-        path = _make_po_excel([row])
+        row_empty = list(SAMPLE_ROW)
+        row_empty[7] = None  # ไม่มีบาร์โค้ด -> เป็นแถวว่าง/สรุปท้ายไฟล์ ควรถูกตัดทิ้ง
+        row_empty[6] = 2
+        # มีแถวปกติอยู่ด้วย 1 แถว กันชนกับ validation ใหม่ที่ raise error ถ้าไฟล์ไม่มีข้อมูลเหลือเลย
+        # (ทดสอบแยกไว้ต่างหากที่ test_all_rows_empty_barcode_raises ด้านล่าง)
+        path = _make_po_excel([SAMPLE_ROW, row_empty])
         try:
             df = parse_po_file(path)
-            self.assertEqual(len(df), 0)
+            self.assertEqual(len(df), 1)
+        finally:
+            os.remove(path)
+
+    def test_all_rows_empty_barcode_raises(self, mock_get_cols):
+        # ถ้าทุกแถวไม่มีบาร์โค้ดเลย (หลังตัดทิ้งแล้วไม่เหลือข้อมูลอะไรเลย) เท่ากับไฟล์นี้ไม่มีข้อมูลที่
+        # ใช้ได้จริงสักแถว — ต้อง raise error ชัดเจน ไม่ใช่คืน DataFrame ว่างเปล่าเงียบๆ (เจอจากการ
+        # ทดสอบ end-to-end 2025-09-06 — ไฟล์ที่ไม่มีข้อมูลเลยเคย import "สำเร็จ" แบบเงียบๆ แล้วยังกด
+        # สร้างแผนต่อได้ กลายเป็นแผนเปล่าที่ไม่มีประโยชน์)
+        row_empty = list(SAMPLE_ROW)
+        row_empty[7] = None
+        path = _make_po_excel([row_empty])
+        try:
+            with self.assertRaises(POParseError):
+                parse_po_file(path)
         finally:
             os.remove(path)
