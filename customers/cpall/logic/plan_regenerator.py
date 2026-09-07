@@ -16,14 +16,22 @@ import io
 import openpyxl
 
 from customers.cpall.logic.date_utils import find_merged_date_header_column, update_date_headers
-from customers.cpall.logic.excel_export import BUFFER_COL, BUFFER_ROW_OFFSET, _find_sub_location_columns
-from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
+# from customers.cpall.logic.excel_export import BUFFER_COL, BUFFER_ROW_OFFSET, _find_sub_location_columns
+# from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
+from customers.cpall.logic.excel_export import (
+    BUFFER_COL,
+    BUFFER_ROW_OFFSET,
+    _find_sub_location_columns,
+    _find_sku_header_rows as _find_pp_sku_header_rows,
+    _renumber_visible_sku_rows as _renumber_pp_visible_sku_rows,
+)
 from customers.cpall.logic.excel_export import get_sheet_name as get_pp_sheet_name
 from customers.cpall.logic.grouping import get_dates_by_sub_location
 from customers.cpall.logic.logistic_plan_export import (
     _find_column_labels,
     _find_line_no_column,
     _find_qty_column_range,
+    _renumber_logistic_sku_rows,
     get_group_templates,
 )
 from customers.cpall.logic.logistic_plan_export import _find_sku_header_rows as _find_lp_sku_header_rows
@@ -148,10 +156,29 @@ def regenerate_production_plan_bytes(plan_run_id: int) -> bytes:
             for offset in range(4):
                 ws.row_dimensions[row + offset].hidden = True
             hidden_count += 1
-    if hidden_count:
-        print(f"[plan_regenerator] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้ (4 แถวต่อ SKU)")
+    # if hidden_count:
+    #     print(f"[plan_regenerator] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้ (4 แถวต่อ SKU)")
 
-    dates_by_sub_location = _update_dates(ws, plan_run, col_to_sub_location)
+    # dates_by_sub_location = _update_dates(ws, plan_run, col_to_sub_location)
+    if hidden_count:
+        print(
+            f"[plan_regenerator] ซ่อน {hidden_count} SKU "
+            f"ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้ (4 แถวต่อ SKU)"
+        )
+
+    # ต้องจัดเลขใหม่หลังจากซ่อน SKU แล้ว
+    renumbered_count = _renumber_pp_visible_sku_rows(ws, header_rows)
+
+    print(
+        f"[plan_regenerator] จัดเลขลำดับ Production ใหม่แล้ว "
+        f"{renumbered_count} SKU"
+    )
+
+    dates_by_sub_location = _update_dates(
+        ws,
+        plan_run,
+        col_to_sub_location,
+    )
     _fix_m5_afternoon_date(ws, dates_by_sub_location, col_to_sub_location)
 
     buffer = io.BytesIO()
@@ -232,16 +259,55 @@ def regenerate_logistic_plan_bytes(plan_run_id: int, group_name: str) -> bytes:
     inactive_barcodes = set(
         ProductMaster.objects.filter(is_active=False).values_list("barcode", flat=True)
     )
+    # hidden_count = 0
+    # for barcode, row in header_rows.items():
+    #     data = by_barcode.get(barcode)
+    #     no_order = data is None or not any(v for v in data.values() if v)
+    #     if barcode in inactive_barcodes and no_order:
+    #         ws.row_dimensions[row].hidden = True
+    #         ws.row_dimensions[row + 1].hidden = True
+    #         hidden_count += 1
+    # if hidden_count:
+    #     print(f"[plan_regenerator:{group_name}] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้")
+
     hidden_count = 0
+
+    # ซ่อนเฉพาะ SKU ที่ inactive และไม่มี PO ในรอบนี้
     for barcode, row in header_rows.items():
         data = by_barcode.get(barcode)
         no_order = data is None or not any(v for v in data.values() if v)
+
         if barcode in inactive_barcodes and no_order:
             ws.row_dimensions[row].hidden = True
             ws.row_dimensions[row + 1].hidden = True
             hidden_count += 1
+
     if hidden_count:
-        print(f"[plan_regenerator:{group_name}] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้")
+        print(
+            f"[plan_regenerator:{group_name}] "
+            f"ซ่อน {hidden_count} SKU "
+            f"ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้"
+        )
+
+    # SKU ที่มี PO หรือยัง active → จัดเลขลำดับใหม่
+    ordered_barcodes = {
+        barcode
+        for barcode, data in by_barcode.items()
+        if any(v for v in data.values() if v)
+    }
+
+    renumbered_count = _renumber_logistic_sku_rows(
+        ws=ws,
+        header_rows=header_rows,
+        line_no_col=line_no_col,
+        inactive_barcodes=inactive_barcodes,
+        ordered_barcodes=ordered_barcodes,
+    )
+
+    print(
+        f"[plan_regenerator:{group_name}] "
+        f"จัดเลขลำดับใหม่แล้ว {renumbered_count} SKU"
+    )
 
     col_to_sub_location = {col: sub_loc for col, (sub_loc, _) in col_labels.items()}
     _update_dates(ws, plan_run, col_to_sub_location)

@@ -217,7 +217,7 @@ class PlanRun(models.Model):
 
     def get_display_name(self, prefix="แพลน"):
         """
-        ชื่อไฟล์ดาวน์โหลดตามฟอร์แมตที่ตกลงกันไว้: {prefix}_7-11_YYYY-MM-DD_HH-MM-SS-FF3
+        ชื่อไฟล์ดาวน์โหลดตามฟอร์แมต: {prefix}_7-11_YYYY-MM-DD_HH-MM-SS-FF3
         prefix เปลี่ยนตามประเภทไฟล์ — "แพลน" สำหรับ Production Plan, ชื่อกลุ่ม (เช่น "บางบัวทอง")
         สำหรับ Logistic Plan — คำนวณจาก created_at ทุกครั้ง ไม่ได้เก็บเป็นคอลัมน์แยก
 

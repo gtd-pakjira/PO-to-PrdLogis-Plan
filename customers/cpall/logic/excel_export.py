@@ -128,6 +128,55 @@ def _find_sku_header_rows(ws) -> dict:
 
     return mapping
 
+def _renumber_visible_sku_rows(ws, header_rows: dict) -> int:
+    """
+    จัดเลขลำดับสินค้าใหม่เฉพาะ SKU ที่มองเห็นใน Production Plan
+
+    Production Plan มี 4 แถวต่อ SKU:
+        row     = ชื่อสินค้า + ยอดสั่ง
+        row + 1 = รายละเอียด/Pack
+        row + 2 = Barcode + ยอดเผื่อ
+        row + 3 = ยอดคืน
+
+    หลักการสำคัญ:
+    - ไม่ insert/delete row
+    - ไม่ copy/move row
+    - ไม่แตะสูตร
+    - ไม่เปลี่ยน hidden state
+    - เปลี่ยนเฉพาะค่า Column C ของแถวหัว SKU
+    - SKU ที่ถูกซ่อนทั้ง 4 แถว จะไม่ถูกนับ
+    - เลขของ SKU ที่มองเห็นจะเรียง 1, 2, 3, ... ใหม่
+    """
+
+    visible_line_no = 1
+    renumbered_count = 0
+
+    # เรียงตามตำแหน่งจริงใน Excel จากบนลงล่าง
+    sku_rows = sorted(header_rows.values())
+
+    for header_row in sku_rows:
+        # Production Plan = 4 แถวต่อ SKU
+        sku_rows_range = range(header_row, header_row + 4)
+
+        # ถ้า SKU นี้ถูกซ่อนครบทั้ง 4 แถว -> ไม่ต้องนับ
+        is_hidden = all(
+            ws.row_dimensions[row].hidden is True
+            for row in sku_rows_range
+        )
+
+        if is_hidden:
+            continue
+
+        # เปลี่ยนเฉพาะเลขลำดับใน Column C
+        ws.cell(
+            row=header_row,
+            column=COL_LINE_NO,
+        ).value = visible_line_no
+
+        visible_line_no += 1
+        renumbered_count += 1
+
+    return renumbered_count
 
 def read_buffer_qty_from_logistic_plan(filepath: str, sheet_name: str = "บางบัวทอง-ผลิต") -> dict:
     """
@@ -354,7 +403,7 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
     if missing_in_template:
         # ไม่ใช่แค่เตือน — หยุดทันที เพราะแปลว่ามี SKU สั่งจริงใน PO แต่จะหายไปเงียบๆ จากไฟล์ผลลัพธ์
         # (สาเหตุที่เจอบ่อย: มี SKU ใหม่ที่ยังไม่เคยมีในไฟล์เทมเพลตนี้มาก่อน) — ไม่ save ไฟล์ที่ไม่ครบออกไป
-        msg_lines = [f"พบ {len(missing_in_template)} SKU ที่มีออเดอร์จริงใน PO แต่หาแถวใน Template ไม่เจอ:"]
+        msg_lines = [f"พบ {len(missing_in_template)} สินค้า ที่มีออเดอร์จริงใน PO แต่หาแถวใน Template ไม่เจอ:"]
         for b in missing_in_template:
             msg_lines.append(f"    - {b}")
         msg_lines.append(f"  -> ไปเพิ่มแถว SKU นี้ในไฟล์เทมเพลต {template_path} ก่อน (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วรันใหม่")
@@ -378,8 +427,22 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
             for offset in range(4):  # ซ่อนครบทั้ง 4 แถวของ SKU นี้ ไม่ใช่แค่ 2 แถวแรก
                 ws.row_dimensions[row + offset].hidden = True
             hidden_count += 1
+    # if hidden_count:
+    #     print(f"[excel_export] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้ (4 แถวต่อ SKU)")
     if hidden_count:
-        print(f"[excel_export] ซ่อน {hidden_count} SKU ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้ (4 แถวต่อ SKU)")
+        print(
+            f"[excel_export] ซ่อน {hidden_count} SKU "
+            f"ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้ (4 แถวต่อ SKU)"
+        )
+
+    # สำคัญ: ต้องทำหลังจากซ่อน SKU แล้ว
+    # จัดเลขลำดับใหม่เฉพาะ SKU ที่ยังมองเห็น
+    renumbered_count = _renumber_visible_sku_rows(ws, header_rows)
+
+    print(
+        f"[excel_export] จัดเลขลำดับ Production ใหม่แล้ว "
+        f"{renumbered_count} SKU"
+    )
 
     wb.save(output_path)
 

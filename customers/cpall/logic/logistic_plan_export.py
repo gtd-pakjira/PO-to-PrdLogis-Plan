@@ -220,6 +220,101 @@ def _find_sku_header_rows(ws, name_col):
             mapping[corrected] = row
     return mapping
 
+def _renumber_visible_sku_rows(
+    ws,
+    header_rows: dict,
+    line_no_col: int,
+    rows_per_sku: int = 2,
+) -> int:
+    """
+    จัดเลขลำดับ SKU ใหม่เฉพาะ SKU ที่มองเห็นใน Logistic Plan
+
+    Logistic Plan ปัจจุบันมี 2 แถวต่อ SKU:
+        row     = แถวหัวสินค้า
+        row + 1 = แถวรองของสินค้า
+
+    สำคัญ:
+    - ไม่ insert row
+    - ไม่ delete row
+    - ไม่ย้าย row
+    - ไม่แตะสูตร
+    - ไม่เปลี่ยน hidden state
+    - เปลี่ยนเฉพาะค่าตัวเลขในคอลัมน์ลำดับ
+    - SKU ที่ถูกซ่อนครบทั้ง block จะไม่ถูกนับ
+    """
+
+    next_line_no = 1
+    renumbered_count = 0
+
+    # header_rows = {barcode: header_row}
+    # เรียงตามตำแหน่งจริงใน Excel จากบนลงล่าง
+    sorted_header_rows = sorted(header_rows.values())
+
+    for header_row in sorted_header_rows:
+        # SKU ถือว่าซ่อนอยู่เมื่อทุกแถวใน block ถูกซ่อน
+        is_hidden = all(
+            ws.row_dimensions[row].hidden is True
+            for row in range(
+                header_row,
+                header_row + rows_per_sku,
+            )
+        )
+
+        if is_hidden:
+            continue
+
+        # เปลี่ยนเฉพาะเลขลำดับ
+        ws.cell(
+            row=header_row,
+            column=line_no_col,
+        ).value = next_line_no
+
+        next_line_no += 1
+        renumbered_count += 1
+
+    return renumbered_count
+
+
+def _renumber_logistic_sku_rows(
+    ws,
+    header_rows,
+    line_no_col,
+    inactive_barcodes,
+    ordered_barcodes,
+):
+    """
+    Renumber Logistic Plan SKU rows.
+
+    ไม่ insert/delete row
+    ไม่ย้าย row
+    ไม่แก้สูตร
+    เปลี่ยนเฉพาะค่าลำดับในแถวหัว SKU
+    """
+
+    next_line_no = 1
+    visible_count = 0
+
+    for barcode, row in sorted(
+        header_rows.items(),
+        key=lambda item: item[1],
+    ):
+        should_hide = (
+            barcode in inactive_barcodes
+            and barcode not in ordered_barcodes
+        )
+
+        if should_hide:
+            continue
+
+        ws.cell(
+            row=row,
+            column=line_no_col,
+        ).value = next_line_no
+
+        next_line_no += 1
+        visible_count += 1
+
+    return visible_count
 
 def _find_buffer_column(ws) -> int:
     """
@@ -400,7 +495,7 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
         # ไม่ใช่แค่เตือน — หยุดทันที เพราะแปลว่ามี SKU สั่งจริงใน PO แต่จะหายไปเงียบๆ จากไฟล์ผลลัพธ์
         # (เช่น รอบนี้จู่ๆ มีคนสั่ง SKU ที่ไฟล์เทมเพลตกลุ่มนี้ไม่เคยมีแถวไว้มาก่อน — ไฟล์รอบเช้าต่างจังหวัด
         # ตอนนี้มีแค่ 18 SKU ไม่ครบ 19 เหมือนกลุ่มอื่น จุดนี้จะโดนจับได้ตรงนี้พอดี) — ไม่ save ไฟล์ที่ไม่ครบออกไป
-        msg_lines = [f"พบ {len(missing_in_template)} SKU ที่มีออเดอร์จริงใน PO แต่หาแถวในเทมเพลต '{template_path}' ไม่เจอ:"]
+        msg_lines = [f"พบ {len(missing_in_template)} สินค้า ที่มีออเดอร์จริงใน PO แต่หาแถวในเทมเพลต '{template_path}' ไม่เจอ:"]
         for b in missing_in_template:
             msg_lines.append(f"    - {b}")
         msg_lines.append("  -> ไปเพิ่มแถว SKU นี้ในไฟล์เทมเพลต (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วรันใหม่")
@@ -410,17 +505,48 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
     # ซ่อนแถวไว้ (ไม่ลบจริง) กันสูตรที่ reference row number อื่นในเทมเพลตพัง — ถ้า inactive แต่ยังมี
     # PO สั่งอยู่จริง จะไม่มาถึงจุดนี้เลย เพราะ run_plan() block ไปตั้งแต่ก่อนเรียกฟังก์ชันนี้แล้ว
     from customers.cpall.models import ProductMaster
+
     inactive_barcodes = set(
-        ProductMaster.objects.filter(is_active=False).values_list("barcode", flat=True)
+        ProductMaster.objects
+        .filter(is_active=False)
+        .values_list("barcode", flat=True)
     )
+
+    # Reset visibility ก่อนทุกครั้ง
+    # เพื่อป้องกันสถานะ hidden จาก template/export รอบก่อนค้างอยู่
+    for barcode, row in header_rows.items():
+        ws.row_dimensions[row].hidden = False
+        ws.row_dimensions[row + 1].hidden = False
+
     hidden_count = 0
+
+    # ซ่อนเฉพาะ SKU ที่ inactive และไม่มี PO ในรอบนี้
     for barcode, row in header_rows.items():
         if barcode in inactive_barcodes and barcode not in all_ordered_barcodes:
             ws.row_dimensions[row].hidden = True
-            ws.row_dimensions[row + 1].hidden = True  # แถวรอง (ชื่ออังกฤษ/pack breakdown)
+            ws.row_dimensions[row + 1].hidden = True
             hidden_count += 1
+
     if hidden_count:
-        print(f"[logistic_plan_export:{group_name}] ซ่อน {hidden_count} แถวสินค้าที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้")
+        print(
+            f"[logistic_plan_export:{group_name}] "
+            f"ซ่อน {hidden_count} SKU "
+            f"ที่ปิดใช้งานและไม่มี PO สั่งในรอบนี้"
+        )
+
+    # จัดเลขลำดับใหม่เฉพาะ SKU ที่ควรแสดง
+    renumbered_count = _renumber_logistic_sku_rows(
+        ws=ws,
+        header_rows=header_rows,
+        line_no_col=line_no_col,
+        inactive_barcodes=inactive_barcodes,
+        ordered_barcodes=all_ordered_barcodes,
+    )
+
+    print(
+        f"[logistic_plan_export:{group_name}] "
+        f"จัดเลขลำดับใหม่แล้ว {renumbered_count} SKU"
+    )
 
     wb.save(output_path)
 

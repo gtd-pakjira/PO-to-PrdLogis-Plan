@@ -133,3 +133,21 @@ skus:
     name_th: "แอปเปิ้ลเจ้าหญิง 200 กรัม"
     pack_size: 10
     unit_price: 33.8
+
+  - barcode: "8859388001060"
+    name_th: "แอปเปิ้ลเจ้าหญิง 200 กรัม"
+    name_en: "APPLE P"
+    pack_size: 25
+    unit_price: 33.8
+
+  - barcode: "8859999999999"
+    name_th: "สินค้าใหม่ทดสอบระบบ"
+    name_en: "Sys Test Product"
+    pack_size: 100
+    unit_price: 99.5
+
+  - barcode: "8859999999999"
+    name_th: "สินค้าใหม่ทดสอบระบบ"
+    name_en: "Sys Test Product"
+    pack_size: 11
+    unit_price: 99.5

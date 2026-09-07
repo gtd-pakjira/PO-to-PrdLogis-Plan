@@ -75,3 +75,8 @@ locations:
     group: "รอบเช้าต่างจังหวัด"
     sub_location: "หาดใหญ่"
 
+
+  - fc_code: "FC999"
+    name_th: "คลังทดสอบใหม่"
+    group: "ทดสอบ"
+    sub_location: "คลังทดสอบใหม่"

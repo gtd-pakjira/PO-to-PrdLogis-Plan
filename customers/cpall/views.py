@@ -361,44 +361,91 @@ def resolve_locations(request, po_import_id):
 
 
 def resolve_products(request, po_import_id):
-    """ให้ Admin กรอกข้อมูลสินค้าที่ยังไม่รู้จักผ่านเว็บ — ต่างจาก resolve_locations ตรงที่ไม่บังคับ
-    (product_master ไม่มีผลต่อการคำนวณเลย มีไว้แค่แสดงชื่อสินค้าที่หน้ากรอกยอดเผื่อ) มีปุ่มข้ามได้เสมอ"""
+    """ให้ Admin จัดการสินค้าที่ยังไม่รู้จักให้ครบทุก SKU ก่อนจึงไปต่อได้"""
     unknown_skus = check_unknown_skus(po_import_id)
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if request.method == "POST":
+        errors = []
+
         for barcode, item_name, net_case_price in unknown_skus:
             name_th = request.POST.get(f"name_th_{barcode}", "").strip() or item_name
             name_en = request.POST.get(f"name_en_{barcode}", "").strip()
             pack_size_str = request.POST.get(f"pack_size_{barcode}", "").strip()
             unit_price_str = request.POST.get(f"unit_price_{barcode}", "").strip()
 
+            # ต้องกรอก Pack Size
             if not pack_size_str:
-                continue  # ยังไม่ได้กรอกอันนี้ -> ข้ามไปก่อน (ไม่บังคับ ต่างจาก location)
+                errors.append(f"{item_name} ({barcode}): กรุณากรอก Pack Size")
+                continue
+
             try:
                 pack_size = int(pack_size_str)
-                # ราคาไม่ได้กรอกเอง -> ใช้ราคาจาก PO ที่ auto-fill ไว้ให้แล้ว (ถ้ามี) เป็น fallback
-                unit_price = float(unit_price_str) if unit_price_str else net_case_price
-            except ValueError:
-                continue
-            save_product(barcode, name_th, name_en or None, pack_size, unit_price)
+                if pack_size <= 0:
+                    raise ValueError
 
+                # ราคาไม่ได้กรอกเอง → ใช้ราคาจาก PO
+                unit_price = (
+                    float(unit_price_str)
+                    if unit_price_str
+                    else net_case_price
+                )
+
+                if unit_price is None:
+                    raise ValueError
+
+            except ValueError:
+                errors.append(
+                    f"{item_name} ({barcode}): Pack Size หรือราคาสินค้าไม่ถูกต้อง"
+                )
+                continue
+
+            save_product(
+                barcode,
+                name_th,
+                name_en or None,
+                pack_size,
+                unit_price,
+            )
+
+        # ตรวจซ้ำหลังจากบันทึก
         remaining = check_unknown_skus(po_import_id)
+
         if remaining:
-            context = {"po_import_id": po_import_id, "unknown_skus": remaining}
+            context = {
+                "po_import_id": po_import_id,
+                "unknown_skus": remaining,
+                "errors": errors,
+            }
+
             if is_htmx:
-                return render(request, "cpall/_resolve_products_form.html", context)
-            return render(request, "cpall/resolve_products.html", context)
+                return render(
+                    request,
+                    "cpall/_resolve_products_form.html",
+                    context,
+                )
+
+            return render(
+                request,
+                "cpall/resolve_products.html",
+                context,
+            )
 
         if is_htmx:
             response = HttpResponse(status=200)
             response["HX-Redirect"] = reverse("cpall:po_list")
             return response
+
         return redirect("cpall:po_list")
 
-    return render(request, "cpall/resolve_products.html", {
-        "po_import_id": po_import_id, "unknown_skus": unknown_skus,
-    })
+    return render(
+        request,
+        "cpall/resolve_products.html",
+        {
+            "po_import_id": po_import_id,
+            "unknown_skus": unknown_skus,
+        },
+    )
 
 
 def new_plan_submit(request):
@@ -418,11 +465,34 @@ def new_plan_submit(request):
     if not po_import_ids:
         return error_response("ต้องเลือก PO อย่างน้อย 1 รอบ")
 
-    # เช็ค inactive SKU ที่ยังมี PO สั่งอยู่จริง "ก่อน" ไปหน้ากรอกยอดเผื่อเลย — เดิมเช็คแค่ตอน submit
-    # ยอดเผื่อ (ใน run_plan()) ทำให้ Admin ต้องกรอกยอดเผื่อครบ 19 SKU ก่อน ถึงจะรู้ว่าสร้างแผนไม่ได้
-    # เสียเวลาโดยไม่จำเป็น — ย้ายมาเช็คตรงนี้เพื่อบล็อกให้เร็วที่สุด (ยังคงเช็คซ้ำใน run_plan() ไว้ด้วย
-    # เผื่อกรณี SKU เพิ่งถูกปิดใช้งานระหว่างที่ Admin เปิดหน้ากรอกยอดเผื่อค้างไว้อยู่)
+    # เช็ค SKU ใหม่ที่ยังไม่มีใน ProductMaster
+    unknown_skus = []
+    for po_import_id in po_import_ids:
+        unknown_skus.extend(check_unknown_skus(po_import_id))
+
+    if unknown_skus:
+        names = ", ".join(
+            f"{barcode} ({item_name})"
+            for barcode, item_name, _ in unknown_skus
+        )
+        return error_response(
+            f"สร้างแผนไม่ได้ — พบ SKU ใหม่ที่ยังไม่ได้เพิ่มใน Product Master: {names} — "
+            f"กรุณาจัดการ SKU เหล่านี้ก่อน",
+            status=409,
+        )
+
+    # เช็ค inactive SKU ที่ยังมี PO สั่งอยู่จริง
     inactive_ordered = check_inactive_skus_ordered(po_import_ids)
+
+    # po_import_ids = [int(x) for x in request.POST.getlist("po_import_ids")]
+    # if not po_import_ids:
+    #     return error_response("ต้องเลือก PO อย่างน้อย 1 รอบ")
+
+    # # เช็ค inactive SKU ที่ยังมี PO สั่งอยู่จริง "ก่อน" ไปหน้ากรอกยอดเผื่อเลย — เดิมเช็คแค่ตอน submit
+    # # ยอดเผื่อ (ใน run_plan()) ทำให้ Admin ต้องกรอกยอดเผื่อครบ 19 SKU ก่อน ถึงจะรู้ว่าสร้างแผนไม่ได้
+    # # เสียเวลาโดยไม่จำเป็น — ย้ายมาเช็คตรงนี้เพื่อบล็อกให้เร็วที่สุด (ยังคงเช็คซ้ำใน run_plan() ไว้ด้วย
+    # # เผื่อกรณี SKU เพิ่งถูกปิดใช้งานระหว่างที่ Admin เปิดหน้ากรอกยอดเผื่อค้างไว้อยู่)
+    # inactive_ordered = check_inactive_skus_ordered(po_import_ids)
     if inactive_ordered:
         names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
         return error_response(

@@ -4,13 +4,12 @@
 {% block content %}
 
 <div class="mb-6">
-    <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
+    <!-- <a href="javascript:history.back()" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a> -->
     <h1 class="text-xl font-semibold text-stone-900 mt-1">พบสินค้าที่ยังไม่รู้จัก</h1>
     <p class="text-sm text-stone-500 mt-1">
-        PO นี้นำเข้าสำเร็จแล้ว และไม่กระทบการคำนวณแผนเลย — แค่มี {{ unknown_skus|length }} รายการที่ยังไม่เคย
-        กรอกข้อมูลไว้ในระบบ กรอกไว้ตอนนี้เลยก็ได้ (จะได้เห็นชื่อสินค้าถูกต้องตอนกรอกยอดเผื่อทีหลัง)
-        หรือข้ามไปก่อน แล้วมากรอกทีหลังผ่านหน้า Admin ก็ได้เช่นกัน
-        อย่าลิมไปเพิ่มใน template ด้วยนะ (ถ้าไม่เพิ่มใน template จะไม่เห็นรหัสสินค้าเหล่านี้ตอนสร้างแผน)
+        PO นี้มี {{ unknown_skus|length }} รายการที่ยังไม่เคย
+        กรอกข้อมูลไว้ในระบบ (จะได้เห็นชื่อสินค้าถูกต้องตอนกรอกยอดเผื่อทีหลัง)
+        อย่าลืมไปเพิ่มใน template ด้วยนะ (ถ้าไม่เพิ่มใน template จะไม่เห็นรหัสสินค้าเหล่านี้ตอนสร้างแผน)
     </p>
 </div>
 
