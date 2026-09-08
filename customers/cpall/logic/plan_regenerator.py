@@ -251,6 +251,7 @@ def regenerate_logistic_plan_bytes(plan_run_id: int, group_name: str) -> bytes:
             if col is not None and qty is not None:
                 ws.cell(row=row, column=col, value=float(qty))
 
+
     # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในกลุ่มนี้รอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต
     # — ซ่อนแถวไว้เหมือนตอนสร้างแผนครั้งแรก (ดู logistic_plan_export.py) *** เจอบั๊กจริง (2025-09-05):
     # เหมือนกับ Production Plan เป๊ะ — ซ่อนถูกต้องตอนสร้างแผนครั้งแรก แต่ไม่เคยซ่อนเลยตอนดาวน์โหลดซ้ำ/

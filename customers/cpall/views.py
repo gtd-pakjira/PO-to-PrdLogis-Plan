@@ -479,8 +479,9 @@ def new_plan_submit(request):
             for barcode, item_name, _ in unknown_skus
         )
         return error_response(
-            f"สร้างแผนไม่ได้ — พบ SKU ใหม่ที่ยังไม่ได้เพิ่มใน Product Master: {names} — "
-            f"กรุณาจัดการ SKU เหล่านี้ก่อน",
+            f"สร้างแผนไม่ได้ — พบสินค้าใหม่ที่ยังไม่ได้เพิ่มใน Product Master: {names}"
+            # f"กรุณาจัดการสินค้าเหล่านี้ก่อน"
+            f"\nตรวจสอบ Template ว่ามีสินค้าเหล่านี้อยู่หรือไม่ (ถ้าไม่มี ให้เพิ่มใน Template ก่อน)",
             status=409,
         )
 
@@ -499,8 +500,9 @@ def new_plan_submit(request):
     if inactive_ordered:
         names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
         return error_response(
-            f"สร้างแผนไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names} — "
-            f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะสร้างแผนได้", status=409,
+            f"สร้างแผนไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names}"
+            # f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะสร้างแผนได้"
+            f"\nตรวจสอบ Template ว่ามีสินค้าเหล่านี้อยู่หรือไม่ (ถ้าไม่มี ให้เพิ่มใน Template ก่อน)", status=409,
         )
 
     # ไปหน้ากรอกยอดเผื่อเสมอ — ขึ้นทุกครั้งที่สร้างแผน ไม่ใช่แค่ตอนมีรอบเช้าต่างจังหวัด

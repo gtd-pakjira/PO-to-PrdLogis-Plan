@@ -407,7 +407,7 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
         msg_lines = [f"พบ {len(missing_in_template)} สินค้า ที่มีออเดอร์จริงใน PO แต่หาแถวใน Template ไม่เจอ:"]
         for b in missing_in_template:
             msg_lines.append(f"    - {b}")
-        msg_lines.append(f"  -> ไปเพิ่มแถว SKU นี้ในไฟล์เทมเพลต {template_path} ก่อน (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วรันใหม่")
+        msg_lines.append(f"  -> ไปเพิ่มแถว สินค้า นี้ในไฟล์เทมเพลตก่อน (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วทำแผนใหม่อีกครั้ง")
         raise ExcelExportError("\n".join(msg_lines))
 
     # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในรอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต —

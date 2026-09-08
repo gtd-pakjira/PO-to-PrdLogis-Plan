@@ -53,8 +53,9 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     if inactive_ordered:
         names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
         raise InactiveSkuOrderedError(
-            f"สร้างแผนไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names} — "
-            f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะสร้างแผนได้"
+            f"สร้างแผนไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names}"
+            # f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะสร้างแผนได้"
+            f"\nตรวจสอบ Template ว่ามีสินค้าเหล่านี้อยู่หรือไม่ (ถ้าไม่มี ให้เพิ่มใน Template ก่อน)"
         )
 
     # ---------- ตรวจสอบยอด ----------
@@ -333,8 +334,9 @@ def edit_buffer_and_regenerate(plan_run_id: int, buffer_override: dict) -> dict:
     if inactive_ordered:
         names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
         raise InactiveSkuOrderedError(
-            f"แก้ยอดเผื่อไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names} — "
-            f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะแก้ไขต่อได้"
+            f"แก้ยอดเผื่อไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names}"
+            # f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะแก้ไขต่อได้"
+            f"\nตรวจสอบ Template ว่ามีสินค้าเหล่านี้อยู่หรือไม่ (ถ้าไม่มี ให้เพิ่มใน Template ก่อน)",
         )
 
     output_dir = plan_run.output_dir or f"customers/cpall/data/output/{datetime.now().strftime('%Y%m%d_%H%M')}"

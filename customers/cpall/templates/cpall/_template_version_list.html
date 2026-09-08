@@ -3,7 +3,7 @@
 "กู้คืน" และ "ลบเวอร์ชันที่ active อยู่" กระทบมากกว่า 1 การ์ด (badge "ใช้งานอยู่" ย้ายไปการ์ดอื่น) จึง
 สลับทั้งลิสต์ทีเดียวง่ายกว่าพยายามอัปเดตทีละการ์ด
 {% endcomment %}
-<div id="version-list" class="grid gap-2 max-w-lg">
+<div id="version-list" class="grid gap-2 w-full max-w-3xl">
     {% for v in versions %}
     <div class="bg-white rounded-lg border {% if v.is_active %}border-emerald-300{% else %}border-stone-200{% endif %} px-4 py-3.5">
         <div class="flex items-center justify-between">
@@ -40,7 +40,16 @@
                 {% if not v.is_active %}
                 <form hx-post="{% url 'cpall:template_version_restore' key v.id %}" class="inline"
                     hx-target="#reconcile-{{ v.id }}"
-                    hx-swap="innerHTML">
+                    hx-swap="innerHTML"
+                    hx-on::after-request="
+                        if (event.detail.successful) {
+                            document.querySelectorAll('[id^=&quot;reconcile-&quot;]').forEach(el => {
+                                if (el.id !== 'reconcile-{{ v.id }}') {
+                                    el.innerHTML = '';
+                                }
+                            });
+                        }
+                    ">
                     {% csrf_token %}
                     <button type="submit" class="text-emerald-700 hover:underline font-medium">ใช้เวอร์ชันนี้</button>
                 </form>

@@ -498,7 +498,7 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
         msg_lines = [f"พบ {len(missing_in_template)} สินค้า ที่มีออเดอร์จริงใน PO แต่หาแถวในเทมเพลต '{template_path}' ไม่เจอ:"]
         for b in missing_in_template:
             msg_lines.append(f"    - {b}")
-        msg_lines.append("  -> ไปเพิ่มแถว SKU นี้ในไฟล์เทมเพลต (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วรันใหม่")
+        msg_lines.append("  -> ไปเพิ่มแถว สินค้า นี้ในไฟล์เทมเพลต (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วทำแผนใหม่อีกครั้ง")
         raise LogisticPlanError("\n".join(msg_lines))
 
     # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในกลุ่มนี้รอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต —
