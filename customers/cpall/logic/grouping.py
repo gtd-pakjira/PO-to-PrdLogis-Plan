@@ -15,6 +15,8 @@ from customers.cpall.logic.db import get_connection
 class ReconciliationError(Exception):
     pass
 
+class DuplicateSubLocationError(Exception):
+    pass
 
 class InactiveSkuOrderedError(Exception):
     """PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งาน (is_active=False) ใน Django Admin อยู่ — ต้องไป active
@@ -281,3 +283,40 @@ if __name__ == "__main__":
         for m in result["mismatches"]:
             print(f"    - {m['barcode']}: PO={m['po_total']} vs grouped={m['grouped_total']}")
         raise ReconciliationError("ยอดไม่ตรงกัน ต้องแก้ไขก่อนไปทำ Production Plan")
+
+
+def check_duplicate_sub_locations(po_import_ids) -> list[dict]:
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    lm.sub_location,
+                    array_agg(
+                        DISTINCT pl.po_import_id
+                        ORDER BY pl.po_import_id
+                    ) AS po_import_ids
+                FROM po_line pl
+                JOIN location_mapping lm
+                    ON pl.fc_code = lm.fc_code
+                WHERE pl.po_import_id = ANY(%s)
+                GROUP BY lm.sub_location
+                HAVING COUNT(DISTINCT pl.po_import_id) > 1
+                ORDER BY lm.sub_location
+                """,
+                (po_import_ids,),
+            )
+
+            return [
+                {
+                    "sub_location": row[0],
+                    "po_import_ids": row[1],
+                }
+                for row in cur.fetchall()
+            ]
+    finally:
+        conn.close()

@@ -24,6 +24,8 @@ from customers.cpall.logic.grouping import (
     ReconciliationError,
     check_inactive_skus_ordered,
     reconcile,
+    DuplicateSubLocationError,
+    check_duplicate_sub_locations,
 )
 from customers.cpall.logic.logistic_plan_export import (
     LogisticPlanError,
@@ -36,6 +38,20 @@ from customers.cpall.models import LogisticGroup
 
 
 def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_override: dict = None) -> dict:
+
+    duplicate_sub_locations = check_duplicate_sub_locations(po_import_ids)
+
+    if duplicate_sub_locations:
+        details = "; ".join(
+            f"{item['sub_location']} "
+            f"(PO Import {', '.join(map(str, item['po_import_ids']))})"
+            for item in duplicate_sub_locations
+        )
+
+        raise DuplicateSubLocationError(
+            f"สร้างแผนไม่สำเร็จ — จุดส่งย่อยซ้ำกันในหลายรอบ PO: {details}"
+        )
+    
     """
     รัน pipeline สร้างแผนทั้งหมด (reconcile -> Production Plan -> Logistic Plan 4 กลุ่ม)
     คืนค่าเป็น dict ล้วนๆ ไม่ print — ผู้เรียก (main.py / เว็บ) เอาไป format แสดงผลเอง
@@ -77,7 +93,7 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     production_plan_result = {"status": "success", "path": production_plan_path, "error": None}
     try:
         export_production_plan(po_import_ids, production_plan_path, buffer_override=buffer_override)
-    except (ExcelExportError, Exception) as e:
+    except Exception as e:
         production_plan_result = {"status": "failed", "path": None, "error": str(e)}
 
     # ---------- Logistic Plan (แต่ละกลุ่ม อิสระต่อกัน) ----------

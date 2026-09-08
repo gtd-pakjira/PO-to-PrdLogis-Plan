@@ -17,6 +17,8 @@ from customers.cpall.logic.grouping import (
     InactiveSkuOrderedError,
     ReconciliationError,
     check_inactive_skus_ordered,
+    DuplicateSubLocationError,
+    check_duplicate_sub_locations,
 )
 from customers.cpall.logic.location_mapping_manager import get_existing_groups, save_location_mapping
 from customers.cpall.logic.plan_regenerator import (
@@ -468,6 +470,20 @@ def new_plan_submit(request):
     if not po_import_ids:
         return error_response("ต้องเลือก PO อย่างน้อย 1 รอบ")
 
+    duplicate_sub_locations = check_duplicate_sub_locations(po_import_ids)
+
+    if duplicate_sub_locations:
+        details = "; ".join(
+            f"{item['sub_location']} "
+            f"(PO Import {', '.join(map(str, item['po_import_ids']))})"
+            for item in duplicate_sub_locations
+        )
+
+        return error_response(
+            f"ไม่สามารถสร้างแผนได้ — จุดส่งย่อยซ้ำกันในหลายรอบ PO: {details}",
+            status=409,
+        )
+
     # เช็ค SKU ใหม่ที่ยังไม่มีใน ProductMaster
     unknown_skus = []
     for po_import_id in po_import_ids:
@@ -622,6 +638,8 @@ def buffer_form_submit(request):
     except InactiveSkuOrderedError as e:
         return error_response(str(e), status=409)
     except ReconciliationError as e:
+        return error_response(str(e), status=409)
+    except DuplicateSubLocationError as e:
         return error_response(str(e), status=409)
     except Exception as e:
         return error_response(f"สร้างแผนล้มเหลว: {type(e).__name__}: {e}", status=500)
