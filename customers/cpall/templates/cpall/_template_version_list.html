@@ -12,18 +12,41 @@
                 {% if v.is_active %}
                 <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">ใช้งานอยู่</span>
                 {% endif %}
+
+                {% if v.mismatch_count %}
+                <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                    ต้องตรวจสอบ ProductMaster {{ v.mismatch_count }} รายการ
+                </span>
+                <!-- <div class="mt-2 text-xs text-stone-500">
+                    {% if v.reconcile.missing_count %}
+                    <div>• เพิ่มสินค้าใหม่: {{ v.reconcile.missing_count }} รายการ</div>
+                    {% endif %}
+
+                    {% if v.reconcile.inactive_count %}
+                    <div>• เปิดใช้งานสินค้า: {{ v.reconcile.inactive_count }} รายการ</div>
+                    {% endif %}
+
+                    {% if v.reconcile.active_missing_count %}
+                    <div>• ปิดใช้งานสินค้า: {{ v.reconcile.active_missing_count }} รายการ</div>
+                    {% endif %}
+                </div> -->
+                {% else %}
+                <span class="inline-flex items-center rounded-full bg-stone-50 px-2 py-0.5 text-[11px] font-medium text-stone-500">
+                    ProductMaster ตรงกัน
+                </span>
+                {% endif %}
             </div>
             <div class="flex items-center gap-3 text-sm">
                 {% if not v.is_active %}
                 <form hx-post="{% url 'cpall:template_version_restore' key v.id %}" class="inline"
-                      hx-confirm="ตั้งเวอร์ชัน {{ v.version_number }} เป็นเวอร์ชันที่ใช้งานอยู่เลยไหม?"
-                      hx-target="#version-list" hx-swap="outerHTML">
+                    hx-target="#reconcile-{{ v.id }}"
+                    hx-swap="innerHTML">
                     {% csrf_token %}
                     <button type="submit" class="text-emerald-700 hover:underline font-medium">ใช้เวอร์ชันนี้</button>
                 </form>
                 {% endif %}
                 <form hx-post="{% url 'cpall:template_version_delete' key v.id %}" class="inline"
-                      hx-confirm="ลบเวอร์ชัน {{ v.version_number }} ถาวรเลยไหม?"
+                    hx-confirm="ลบเวอร์ชัน {{ v.version_number }} ถาวรเลยไหม?"
                       hx-target="#version-list" hx-swap="outerHTML">
                     {% csrf_token %}
                     <button type="submit" class="text-stone-400 hover:text-red-600" title="ลบเวอร์ชันนี้">
@@ -36,6 +59,11 @@
             {% if v.original_filename %}ไฟล์: {{ v.original_filename }} &middot; {% endif %}อัปโหลดเมื่อ {{ v.uploaded_at|date:"d/m/Y H:i" }}
             {% if v.validation_summary %} &middot; {{ v.validation_summary }}{% endif %}
         </p>
+        <div id="reconcile-{{ v.id }}">
+            {% if new_version_id and v.id == new_version_id and v.mismatch_count %}
+                {% include "cpall/_template_version_reconcile.html" with version_id=v.id result=v.reconcile %}
+            {% endif %}
+        </div>
     </div>
     {% endfor %}
 </div>

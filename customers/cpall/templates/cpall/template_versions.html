@@ -9,6 +9,48 @@
     <p class="text-sm text-stone-500 mt-1">เก็บทุกเวอร์ชันที่เคยอัปโหลดไว้ถาวร ย้อนกลับไปเวอร์ชันไหนก็ได้</p>
 </div>
 
-{% include "cpall/_template_version_list.html" %}
+<div id="version-list-container">
+    {% include "cpall/_template_version_list.html" %}
+</div>
+
+<!-- {% if new_version_id %}
+    {% for v in versions %}
+        {% if v.id == new_version_id %}
+            {% if v.mismatch_count %}
+                <div id="new-version-reconcile">
+                    {% include "cpall/_template_version_reconcile.html" with version_id=v.id result=v.reconcile %}
+                </div>
+            {% else %}
+                {% include "cpall/_template_version_confirm.html" with version_id=v.id version=v %}
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+{% endif %} -->
+
+{% if new_version_id %}
+    {% for v in versions %}
+        {% if v.id == new_version_id %}
+            <div id="new-version-popup-container">
+                {% if not v.mismatch_count %}
+                    {% include "cpall/_template_version_confirm.html" with version_id=v.id version=v %}
+                {% endif %}
+            </div>
+
+            <script>
+                const popupKey = "template-version-popup-{{ v.id }}";
+
+                if (sessionStorage.getItem(popupKey)) {
+                    document.getElementById("new-version-popup-container")?.remove();
+                } else {
+                    sessionStorage.setItem(popupKey, "shown");
+
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete("new_version");
+                    window.history.replaceState({}, "", url);
+                }
+            </script>
+        {% endif %}
+    {% endfor %}
+{% endif %}
 
 {% endblock %}

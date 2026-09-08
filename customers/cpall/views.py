@@ -63,6 +63,9 @@ from customers.cpall.logic.template_manager import (
     list_versions,
     restore_to_version,
     upload_new_version,
+    reconcile_template_version,
+    apply_product_master_action,
+    _sync_live_file,
 )
 from customers.cpall.models import PlanRun
 
@@ -936,20 +939,30 @@ def template_upload(request, key):
             f.write(chunk)
 
     try:
-        upload_new_version(key, temp_path, original_filename=new_file.name)
+        result = upload_new_version(
+            key,
+            temp_path,
+            original_filename=new_file.name,
+        )
     except TemplateValidationError as e:
         # validate ไม่ผ่าน -> เวอร์ชัน/ไฟล์ live เดิมไม่ถูกแตะเลย ลบไฟล์ที่อัปโหลดมาทิ้ง
         if os.path.exists(temp_path):
             os.remove(temp_path)
         return error_response(str(e))
 
-    # สำเร็จ -> ไปหน้าประวัติเวอร์ชันของ template นี้เลย (เห็นเวอร์ชันใหม่ + sku_count ที่ validate
-    # ได้ อยู่ในบริบทจริง แทนที่จะเป็นหน้าสรุปผลโดดๆ)
+    # สำเร็จ -> ไปหน้าประวัติเวอร์ชัน
     if is_htmx:
+        url = reverse("cpall:template_versions", args=[key])
+        url += f"?new_version={result['version'].id}"
+
         response = HttpResponse(status=200)
-        response["HX-Redirect"] = reverse("cpall:template_versions", args=[key])
+        response["HX-Redirect"] = url
         return response
-    return redirect("cpall:template_versions", key=key)
+
+    return redirect(
+        "cpall:template_versions",
+        key=key,
+    )
 
 
 def template_versions(request, key):
@@ -958,32 +971,217 @@ def template_versions(request, key):
     if key not in registry:
         raise Http404
     versions = list_versions(key)
+
+    new_version_id = request.GET.get("new_version")
+
+    try:
+        new_version_id = int(new_version_id) if new_version_id else None
+    except ValueError:
+        new_version_id = None
+
     return render(request, "cpall/template_versions.html", {
-        "key": key, "label": registry[key]["label"], "versions": versions,
+        "key": key,
+        "label": registry[key]["label"],
+        "versions": versions,
+        "new_version_id": new_version_id,
     })
 
+
+# def template_version_restore(request, key, version_id):
+#     if request.method != "POST":
+#         return redirect("cpall:template_versions", key=key)
+#     if key not in get_template_registry():
+#         raise Http404
+#     is_htmx = request.headers.get("HX-Request") == "true"
+#     try:
+#         # version = restore_to_version(key, version_id)
+#         # toast = {"message": f"ใช้เวอร์ชัน {version.version_number} แล้ว", "level": "success"}
+#         result = restore_to_version(key, version_id)
+#         version = result["version"]
+
+#         if result["status"] == "pending":
+#             if is_htmx:
+#                 response = render(
+#                     request,
+#                     "cpall/_template_version_reconcile.html",
+#                     {
+#                         "key": key,
+#                         "version_id": version_id,
+#                         "result": result["reconcile"],
+#                     },
+#                 )
+
+#                 response["HX-Trigger"] = json.dumps({
+#                     "toast": {
+#                         "message": (
+#                             f"เวอร์ชัน {version.version_number} "
+#                             "ต้องตรวจสอบ ProductMaster ก่อนใช้งาน"
+#                         ),
+#                         "level": "warning",
+#                     }
+#                 })
+
+#                 return response
+
+#             return redirect("cpall:template_versions", key=key)
+#         else:
+#             toast = {
+#                 "message": f"ใช้เวอร์ชัน {version.version_number} แล้ว",
+#                 "level": "success",
+#             }
+#     except TemplateValidationError as e:
+#         if not is_htmx:
+#             return redirect("cpall:template_versions", key=key)
+#         toast = {"message": str(e), "level": "error"}
+
+#     if is_htmx:
+#         versions = list_versions(key)
+#         response = render(request, "cpall/_template_version_list.html", {"key": key, "versions": versions})
+#         response["HX-Trigger"] = json.dumps({"toast": toast})
+#         return response
+#     return redirect("cpall:template_versions", key=key)
 
 def template_version_restore(request, key, version_id):
     if request.method != "POST":
         return redirect("cpall:template_versions", key=key)
+
     if key not in get_template_registry():
         raise Http404
+
     is_htmx = request.headers.get("HX-Request") == "true"
+
     try:
-        version = restore_to_version(key, version_id)
-        toast = {"message": f"ใช้เวอร์ชัน {version.version_number} แล้ว", "level": "success"}
-    except TemplateValidationError as e:
-        if not is_htmx:
+        result = restore_to_version(key, version_id)
+        version = result["version"]
+
+        if result["status"] == "pending":
+            if is_htmx:
+                response = render(
+                    request,
+                    "cpall/_template_version_reconcile.html",
+                    {
+                        "key": key,
+                        "version_id": version_id,
+                        "result": result["reconcile"],
+                    },
+                )
+
+                response["HX-Trigger"] = json.dumps({
+                    "toast": {
+                        "message": (
+                            f"เวอร์ชัน {version.version_number} "
+                            "ต้องตรวจสอบ ProductMaster ก่อนใช้งาน"
+                        ),
+                        "level": "warning",
+                    }
+                })
+
+                return response
+
             return redirect("cpall:template_versions", key=key)
-        toast = {"message": str(e), "level": "error"}
 
-    if is_htmx:
-        versions = list_versions(key)
-        response = render(request, "cpall/_template_version_list.html", {"key": key, "versions": versions})
-        response["HX-Trigger"] = json.dumps({"toast": toast})
-        return response
-    return redirect("cpall:template_versions", key=key)
+        # ProductMaster ตรงกันแล้ว
+        # ยังไม่ Active / Sync จนกว่า Admin จะยืนยัน
+        if is_htmx:
+            response = render(
+                request,
+                "cpall/_template_version_confirm.html",
+                {
+                    "key": key,
+                    "version_id": version_id,
+                    "version": version,
+                },
+            )
 
+            return response
+
+        return redirect("cpall:template_versions", key=key)
+
+    except TemplateValidationError as e:
+        if is_htmx:
+            response = HttpResponse(status=400)
+            response["HX-Trigger"] = json.dumps({
+                "toast": {
+                    "message": str(e),
+                    "level": "error",
+                }
+            })
+            return response
+
+        return redirect("cpall:template_versions", key=key)
+
+def template_version_activate(request, key, version_id):
+    if request.method != "POST":
+        return HttpResponse(status=405)
+
+    if key not in get_template_registry():
+        raise Http404
+
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    try:
+        from customers.cpall.models import TemplateVersion
+
+        version = TemplateVersion.objects.get(
+            id=version_id,
+            template_key=key,
+        )
+
+        # ตรวจ ProductMaster ซ้ำอีกครั้งก่อนเปลี่ยนจริง
+        reconcile = reconcile_template_version(
+            key=key,
+            version_id=version_id,
+        )
+
+        if reconcile["mismatch_count"] > 0:
+            return HttpResponse(
+                "ProductMaster ยังไม่ตรงกับ Template",
+                status=400,
+            )
+
+        TemplateVersion.objects.filter(
+            template_key=key,
+            is_active=True,
+        ).update(is_active=False)
+
+        version.is_active = True
+        version.save(update_fields=["is_active"])
+
+        _sync_live_file(key, version)
+
+        if is_htmx:
+            versions = list_versions(key)
+
+            response = render(
+                request,
+                "cpall/_template_version_list.html",
+                {
+                    "key": key,
+                    "versions": versions,
+                },
+            )
+
+            response["HX-Trigger"] = json.dumps({
+                "toast": {
+                    "message": (
+                        f"เปลี่ยนเป็นเวอร์ชัน "
+                        f"{version.version_number} แล้ว"
+                    ),
+                    "level": "success",
+                }
+            })
+
+            return response
+
+        return redirect("cpall:template_versions", key=key)
+
+    except TemplateVersion.DoesNotExist:
+        raise Http404
+    except TemplateValidationError as e:
+        if is_htmx:
+            return HttpResponse(str(e), status=400)
+
+        return redirect("cpall:template_versions", key=key)
 
 def template_version_delete(request, key, version_id):
     if request.method != "POST":
@@ -1011,6 +1209,166 @@ def template_version_delete(request, key, version_id):
     return render(request, "cpall/template_versions.html", {
         "key": key, "label": registry[key]["label"], "versions": versions,
     })
+
+def template_version_reconcile(request, key, version_id):
+    if request.method != "GET":
+        return HttpResponse(status=405)
+
+    if key not in get_template_registry():
+        raise Http404
+
+    try:
+        result = reconcile_template_version(
+            key=key,
+            version_id=version_id,
+        )
+    except TemplateValidationError as e:
+        return HttpResponse(str(e), status=400)
+
+    return render(
+        request,
+        "cpall/_template_version_reconcile.html",
+        {
+            "key": key,
+            "version_id": version_id,
+            "result": result,
+        },
+    )
+
+def template_version_product_action(request, key, version_id):
+    if request.method != "POST":
+        return HttpResponse(status=405)
+
+    if key not in get_template_registry():
+        raise Http404
+
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    action = request.POST.get("action", "").strip()
+    barcode = request.POST.get("barcode", "").strip()
+
+    name_th = request.POST.get("name_th", "").strip()
+    name_en = request.POST.get("name_en", "").strip()
+    pack_size_str = request.POST.get("pack_size", "").strip()
+    unit_price_str = request.POST.get("unit_price", "").strip()
+
+    if action == "CREATE_PRODUCT":
+        if not name_th:
+            return HttpResponse(
+                "กรุณากรอกชื่อสินค้า (ไทย)",
+                status=400,
+            )
+
+        if not pack_size_str:
+            return HttpResponse(
+                "กรุณากรอก Pack Size",
+                status=400,
+            )
+
+        if not unit_price_str:
+            return HttpResponse(
+                "กรุณากรอกราคา",
+                status=400,
+            )
+
+        try:
+            pack_size = int(pack_size_str)
+            unit_price = float(unit_price_str)
+
+            if pack_size <= 0 or unit_price < 0:
+                raise ValueError
+
+        except ValueError:
+            return HttpResponse(
+                "Pack Size หรือราคาไม่ถูกต้อง",
+                status=400,
+            )
+    else:
+        pack_size = None
+        unit_price = None
+
+    try:
+        result = apply_product_master_action(
+            action=action,
+            barcode=barcode,
+            name_th=name_th or None,
+            name_en=name_en or None,
+            pack_size=pack_size,
+            unit_price=unit_price,
+        )
+
+        # ตรวจสอบ Template กับ ProductMaster ใหม่ทันที
+        reconcile = reconcile_template_version(
+            key=key,
+            version_id=version_id,
+        )
+
+        if reconcile["mismatch_count"] == 0:
+            from customers.cpall.models import TemplateVersion
+
+            version = TemplateVersion.objects.get(
+                id=version_id,
+                template_key=key,
+            )
+
+            response = render(
+                request,
+                "cpall/_template_version_confirm.html",
+                {
+                    "key": key,
+                    "version_id": version_id,
+                    "version": version,
+                },
+            )
+        else:
+            response = render(
+                request,
+                "cpall/_template_version_reconcile.html",
+                {
+                    "key": key,
+                    "version_id": version_id,
+                    "result": reconcile,
+                },
+            )
+
+        action_messages = {
+            "CREATE_PRODUCT": "สร้างสินค้า",
+            "ACTIVATE": "เปิดใช้งานสินค้า",
+            "DEACTIVATE": "ปิดใช้งานสินค้า",
+        }
+
+        action_label = action_messages.get(
+            result["action"],
+            "ดำเนินการ",
+        )
+
+        # product_name = name_th or barcode
+        product_name = result["product_name"]
+
+        response["HX-Trigger"] = json.dumps({
+            "toast": {
+                "message": (
+                    f"{action_label} “{product_name}” "
+                    "ใน ProductMaster แล้ว"
+                ),
+                "level": "success",
+            }
+        })
+
+        return response
+
+    except TemplateValidationError as e:
+        if is_htmx:
+            response = HttpResponse(status=400)
+            response["HX-Trigger"] = json.dumps({
+                "toast": {
+                    "message": str(e),
+                    "level": "error",
+                }
+            })
+            return response
+
+        return redirect("cpall:template_versions", key=key)
 
 
 # ---------- ดูตารางตัวเลขจริงในหน้าเว็บ (ไม่ต้องดาวน์โหลด Excel) ----------

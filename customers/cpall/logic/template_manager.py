@@ -179,6 +179,343 @@ def validate_template(key: str, filepath: str) -> dict:
 
         return {"qty_column_count": qty_end_col - qty_start_col + 1, "sku_count": len(header_rows)}
 
+def reconcile_template_with_product_master(key: str, filepath: str) -> dict:
+    """
+    ตรวจสอบความสอดคล้องระหว่าง Template กับ ProductMaster
+
+    Production Template:
+      - Template มี + ProductMaster ไม่มี      -> CREATE_PRODUCT
+      - Template มี + ProductMaster inactive    -> ACTIVATE
+      - ProductMaster active + Template ไม่มี   -> DEACTIVATE
+      - ทั้งคู่ active / ทั้งคู่ไม่มี            -> MATCH
+
+    Logistic Template:
+      - Template มี + ProductMaster ไม่มี      -> CREATE_PRODUCT
+      - Template มี + ProductMaster inactive    -> ACTIVATE
+      - ProductMaster active แต่ไม่อยู่ในกลุ่มนี้
+        -> ไม่ถือว่า mismatch เพราะ Logistic Template
+           เป็น subset ตาม Location/Group
+    """
+    registry = get_template_registry()
+
+    if key not in registry:
+        raise TemplateValidationError(f"ไม่รู้จัก template '{key}'")
+
+    info = registry[key]
+
+    try:
+        wb = openpyxl.load_workbook(filepath, data_only=False)
+    except Exception as e:
+        raise TemplateValidationError(f"เปิดไฟล์ไม่ได้: {e}")
+
+    # ---------------------------------------------------------
+    # 1) อ่าน SKU จาก Template
+    # ---------------------------------------------------------
+    if info["kind"] == "production":
+        sheet_name = get_pp_sheet_name()
+
+        if sheet_name not in wb.sheetnames:
+            raise TemplateValidationError(
+                f"ไม่พบชีต '{sheet_name}' ใน Template"
+            )
+
+        ws = wb[sheet_name]
+        template_rows = _find_pp_sku_header_rows(ws)
+
+        # Production:
+        # header row -> ชื่อสินค้าอยู่ col D
+        template_items = {}
+
+        for barcode, row in template_rows.items():
+            item_name = str(ws.cell(row=row, column=4).value or "").strip()
+
+            template_items[barcode] = {
+                "barcode": barcode,
+                "item_name": item_name or None,
+                "row": row,
+            }
+
+    else:
+        # Logistic
+        group_name = info["group"]
+        _, sheet_name = get_group_templates()[group_name]
+
+        if sheet_name not in wb.sheetnames:
+            raise TemplateValidationError(
+                f"ไม่พบชีต '{sheet_name}' ใน Template"
+            )
+
+        ws = wb[sheet_name]
+
+        line_no_col, header_row = _find_line_no_column(ws)
+        name_col = line_no_col + 1
+
+        template_rows = _find_lp_sku_header_rows(ws, name_col)
+
+        template_items = {}
+
+        for barcode, row in template_rows.items():
+            item_name = str(ws.cell(row=row, column=name_col).value or "").strip()
+
+            template_items[barcode] = {
+                "barcode": barcode,
+                "item_name": item_name or None,
+                "row": row,
+            }
+
+    # ---------------------------------------------------------
+    # 2) อ่าน ProductMaster
+    # ---------------------------------------------------------
+    from customers.cpall.models import ProductMaster
+
+    customer_id = get_cpall_customer_id()
+
+    products = {
+        p.barcode: p
+        for p in ProductMaster.objects.filter(customer_id=customer_id)
+    }
+
+    # ---------------------------------------------------------
+    # 3) Reconcile
+    # ---------------------------------------------------------
+    matched = []
+    missing_in_product_master = []
+    inactive_in_product_master = []
+    active_missing_in_template = []
+
+    # Template -> ProductMaster
+    for barcode, template_item in sorted(template_items.items()):
+
+        product = products.get(barcode)
+
+        # Template มี แต่ ProductMaster ไม่มี
+        if product is None:
+            missing_in_product_master.append({
+                "barcode": barcode,
+                "item_name": template_item["item_name"],
+                "template_row": template_item["row"],
+                "action": "CREATE_PRODUCT",
+            })
+            continue
+
+        # Template มี แต่ ProductMaster inactive
+        if not product.is_active:
+            inactive_in_product_master.append({
+                "barcode": barcode,
+                "item_name": product.name_th or template_item["item_name"],
+                "template_item_name": template_item["item_name"],
+                "template_row": template_item["row"],
+                "action": "ACTIVATE",
+            })
+            continue
+
+        # ตรงกัน
+        matched.append({
+            "barcode": barcode,
+            "item_name": product.name_th or template_item["item_name"],
+            "template_row": template_item["row"],
+        })
+
+    # ---------------------------------------------------------
+    # 4) ProductMaster -> Template
+    #
+    # เฉพาะ Production Template เท่านั้น
+    # Logistic Template เป็น subset ของสินค้า
+    # ---------------------------------------------------------
+    if info["kind"] == "production":
+        template_barcodes = set(template_items.keys())
+
+        for barcode, product in sorted(products.items()):
+            if product.is_active and barcode not in template_barcodes:
+                active_missing_in_template.append({
+                    "barcode": barcode,
+                    "item_name": product.name_th,
+                    "action": "DEACTIVATE",
+                })
+
+    # ---------------------------------------------------------
+    # 5) Summary
+    # ---------------------------------------------------------
+    mismatch_count = (
+        len(missing_in_product_master)
+        + len(inactive_in_product_master)
+        + len(active_missing_in_template)
+    )
+
+    return {
+        "template_key": key,
+        "template_label": info["label"],
+        "kind": info["kind"],
+
+        "template_sku_count": len(template_items),
+        "product_master_sku_count": len(products),
+
+        "matched": matched,
+        "missing_in_product_master": missing_in_product_master,
+        "inactive_in_product_master": inactive_in_product_master,
+        "active_missing_in_template": active_missing_in_template,
+
+        "matched_count": len(matched),
+        "missing_count": len(missing_in_product_master),
+        "inactive_count": len(inactive_in_product_master),
+        "active_missing_count": len(active_missing_in_template),
+
+        "mismatch_count": mismatch_count,
+        "is_consistent": mismatch_count == 0,
+    }
+
+def get_template_reconciliation(key: str, filepath: str) -> dict:
+    """
+    ตรวจสอบ Template กับ ProductMaster และคืนผลสำหรับหน้า Admin
+
+    ไม่แก้ ProductMaster
+    ไม่เปลี่ยน active version
+    อ่านอย่างเดียว
+    """
+    result = reconcile_template_with_product_master(key, filepath)
+
+    return {
+        "template_key": key,
+        "template_label": result["template_label"],
+        "kind": result["kind"],
+
+        "is_consistent": result["is_consistent"],
+        "mismatch_count": result["mismatch_count"],
+
+        "matched_count": result["matched_count"],
+        "missing_count": result["missing_count"],
+        "inactive_count": result["inactive_count"],
+        "active_missing_count": result["active_missing_count"],
+
+        "matched": result["matched"],
+        "missing_in_product_master": result["missing_in_product_master"],
+        "inactive_in_product_master": result["inactive_in_product_master"],
+        "active_missing_in_template": result["active_missing_in_template"],
+    }
+
+def reconcile_template_version(key: str, version_id: int) -> dict:
+    """
+    Reconcile TemplateVersion ที่ระบุ กับ ProductMaster ปัจจุบัน
+    โดยไม่เปลี่ยนสถานะอะไร
+    """
+    from customers.cpall.models import TemplateVersion
+
+    try:
+        version = TemplateVersion.objects.get(
+            id=version_id,
+            template_key=key,
+        )
+    except TemplateVersion.DoesNotExist:
+        raise TemplateValidationError("ไม่พบเวอร์ชันนี้")
+
+    result = reconcile_template_with_product_master(
+        key,
+        version.file_path,
+    )
+
+    result["version_id"] = version.id
+    result["version_number"] = version.version_number
+
+    return result
+
+
+
+def apply_product_master_action(
+    action: str,
+    barcode: str,
+    *,
+    name_th: str = None,
+    name_en: str = None,
+    pack_size=None,
+    unit_price=None,
+) -> dict:
+    """
+    ให้ Admin ยืนยันการเปลี่ยน ProductMaster เป็นราย SKU
+
+    action:
+      CREATE_PRODUCT
+      ACTIVATE
+      DEACTIVATE
+    """
+    from django.db import transaction
+    from customers.cpall.models import ProductMaster
+    from customers.cpall.logic.product_master_manager import save_product
+
+    customer_id = get_cpall_customer_id()
+
+    barcode = str(barcode).strip()
+
+    if not barcode:
+        raise TemplateValidationError("ไม่พบ Barcode")
+
+    with transaction.atomic():
+
+        if action == "CREATE_PRODUCT":
+
+            if not name_th:
+                raise TemplateValidationError(
+                    f"SKU {barcode} ต้องระบุชื่อสินค้า"
+                )
+
+            product, created = ProductMaster.objects.get_or_create(
+                customer_id=customer_id,
+                barcode=barcode,
+                defaults={
+                    "name_th": name_th,
+                    "name_en": name_en or "",
+                    "pack_size": pack_size,
+                    "unit_price": unit_price,
+                    "is_active": True,
+                },
+            )
+
+            if not created:
+                raise TemplateValidationError(
+                    f"SKU {barcode} มีอยู่ใน ProductMaster แล้ว"
+                )
+
+            return {
+                "action": action,
+                "barcode": barcode,
+                "product_name": product.name_th,
+                "status": "created",
+            }
+
+        product = ProductMaster.objects.filter(
+            customer_id=customer_id,
+            barcode=barcode,
+        ).first()
+
+        if product is None:
+            raise TemplateValidationError(
+                f"ไม่พบ SKU {barcode} ใน ProductMaster"
+            )
+
+        if action == "ACTIVATE":
+            product.is_active = True
+            product.save(update_fields=["is_active", "updated_at"])
+
+            return {
+                "action": action,
+                "barcode": barcode,
+                "product_name": product.name_th,
+                "status": "activated",
+            }
+
+        if action == "DEACTIVATE":
+            product.is_active = False
+            product.save(update_fields=["is_active", "updated_at"])
+
+            return {
+                "action": action,
+                "barcode": barcode,
+                "product_name": product.name_th,
+                "status": "deactivated",
+            }
+
+        raise TemplateValidationError(
+            f"ไม่รู้จัก action '{action}'"
+        )
 
 def _version_file_path(key: str, version_number: int) -> str:
     return os.path.join(VERSIONS_DIR, key, f"v{version_number}.xlsx")
@@ -244,13 +581,36 @@ def list_versions(key: str) -> list[dict]:
     from customers.cpall.models import TemplateVersion
 
     _ensure_initial_version(key)
-    versions = TemplateVersion.objects.filter(template_key=key).order_by("-version_number")
-    return [
-        {"id": v.id, "version_number": v.version_number, "is_active": v.is_active,
-         "uploaded_at": v.uploaded_at, "validation_summary": v.validation_summary,
-         "original_filename": v.original_filename}
-        for v in versions
-    ]
+
+    versions = (
+        TemplateVersion.objects
+        .filter(template_key=key)
+        .order_by("-version_number")
+    )
+
+    result = []
+
+    for v in versions:
+        reconcile = reconcile_template_with_product_master(
+            key=key,
+            filepath=v.file_path,
+        )
+
+        result.append({
+            "id": v.id,
+            "version_number": v.version_number,
+            "is_active": v.is_active,
+            "uploaded_at": v.uploaded_at,
+            "validation_summary": v.validation_summary,
+            "original_filename": v.original_filename,
+
+            # ข้อมูล reconciliation
+            "reconcile": reconcile,
+            "mismatch_count": reconcile["mismatch_count"],
+            "is_consistent": reconcile["is_consistent"],
+        })
+
+    return result
 
 
 def upload_new_version(key: str, new_filepath: str, original_filename: str = None) -> dict:
@@ -275,31 +635,109 @@ def upload_new_version(key: str, new_filepath: str, original_filename: str = Non
     os.makedirs(os.path.dirname(version_path), exist_ok=True)
     shutil.move(new_filepath, version_path)
 
-    TemplateVersion.objects.filter(template_key=key, is_active=True).update(is_active=False)
+    # TemplateVersion.objects.filter(template_key=key, is_active=True).update(is_active=False)
+    # new_version = TemplateVersion.objects.create(
+    #     customer_id=get_cpall_customer_id(), template_key=key, version_number=next_version,
+    #     file_path=version_path, original_filename=original_filename, is_active=True,
+    #     validation_summary=f"sku_count={validation_result.get('sku_count')}",
+    # )
+    # _sync_live_file(key, new_version)
+
+    # return validation_result
+
+    # ตรวจสอบความสอดคล้องกับ ProductMaster
+    reconcile_result = reconcile_template_with_product_master(
+        key=key,
+        filepath=version_path,
+    )
+
+    # ถ้ามี mismatch → สร้าง version แต่ยังไม่ active
+    if reconcile_result["mismatch_count"] > 0:
+        new_version = TemplateVersion.objects.create(
+            customer_id=get_cpall_customer_id(),
+            template_key=key,
+            version_number=next_version,
+            file_path=version_path,
+            original_filename=original_filename,
+            is_active=False,
+            validation_summary=f"sku_count={validation_result.get('sku_count')}",
+        )
+
+        return {
+            **validation_result,
+            "status": "pending",
+            "version": new_version,
+            "reconcile": reconcile_result,
+        }
+
+    # ไม่มี mismatch → ยังไม่ active และยังไม่ sync live
+    # รอ Admin กดยืนยันผ่าน popup ก่อน
     new_version = TemplateVersion.objects.create(
-        customer_id=get_cpall_customer_id(), template_key=key, version_number=next_version,
-        file_path=version_path, original_filename=original_filename, is_active=True,
+        customer_id=get_cpall_customer_id(),
+        template_key=key,
+        version_number=next_version,
+        file_path=version_path,
+        original_filename=original_filename,
+        is_active=False,
         validation_summary=f"sku_count={validation_result.get('sku_count')}",
     )
-    _sync_live_file(key, new_version)
 
-    return validation_result
+    return {
+        **validation_result,
+        "status": "confirm",
+        "version": new_version,
+        "reconcile": reconcile_result,
+    }
 
 
 def restore_to_version(key: str, version_id: int):
-    """ตั้งเวอร์ชันที่ระบุให้กลับมาเป็น active (ไฟล์ของทุกเวอร์ชันยังอยู่ครบ แค่สลับว่าตัวไหน active)"""
+    """
+    ตรวจสอบ Template Version ที่ต้องการ restore กับ ProductMaster
+    ก่อนสลับ Active
+
+    - ไม่มี mismatch → restore และ sync live
+    - มี mismatch → ยังไม่ Active และยังไม่ sync live
+    """
     from customers.cpall.models import TemplateVersion
 
     try:
-        version = TemplateVersion.objects.get(id=version_id, template_key=key)
+        version = TemplateVersion.objects.get(
+            id=version_id,
+            template_key=key,
+        )
     except TemplateVersion.DoesNotExist:
         raise TemplateValidationError("ไม่พบเวอร์ชันนี้")
 
-    TemplateVersion.objects.filter(template_key=key, is_active=True).update(is_active=False)
-    version.is_active = True
-    version.save(update_fields=["is_active"])
-    _sync_live_file(key, version)
-    return version
+    # ตรวจสอบกับ ProductMaster ณ เวลาที่กด restore
+    reconcile_result = reconcile_template_with_product_master(
+        key=key,
+        filepath=version.file_path,
+    )
+
+    # มี mismatch → ห้ามเปลี่ยน Active
+    if reconcile_result["mismatch_count"] > 0:
+        return {
+            "status": "pending",
+            "version": version,
+            "reconcile": reconcile_result,
+        }
+
+    # # ไม่มี mismatch → restore ได้
+    # TemplateVersion.objects.filter(
+    #     template_key=key,
+    #     is_active=True,
+    # ).update(is_active=False)
+
+    # version.is_active = True
+    # version.save(update_fields=["is_active"])
+
+    # _sync_live_file(key, version)
+
+    return {
+        "status": "active",
+        "version": version,
+        "reconcile": reconcile_result,
+    }
 
 
 def delete_version(key: str, version_id: int):
@@ -327,16 +765,15 @@ def delete_version(key: str, version_id: int):
     if used_in_production or used_in_logistic:
         raise TemplateInUseError("ลบไม่ได้ — มีแผนที่เคยสร้างไว้ใช้เทมเพลตเวอร์ชันนี้อยู่")
 
-    was_active = version.is_active
+    if version.is_active:
+        raise TemplateInUseError(
+            "ลบไม่ได้ — เวอร์ชันที่กำลังใช้งานอยู่ต้องเลือกเวอร์ชันอื่นให้ใช้งานก่อน"
+        )
+
     file_path = version.file_path
     version.delete()
 
     if os.path.exists(file_path):
         os.remove(file_path)
 
-    if was_active:
-        new_active = TemplateVersion.objects.filter(template_key=key).order_by("-version_number").first()
-        if new_active:
-            new_active.is_active = True
-            new_active.save(update_fields=["is_active"])
-            _sync_live_file(key, new_active)
+

@@ -136,7 +136,7 @@
          @toast.window="
             if (($event.detail.level || 'success') === 'error') return;
             toasts.push({ id: Date.now(), message: $event.detail.message, level: $event.detail.level || 'success' });
-            setTimeout(() => toasts.shift(), 4000)
+            setTimeout(() => toasts.shift(), 6000)
          "
          class="fixed bottom-5 right-5 z-50 space-y-2 w-72">
         <template x-for="t in toasts" :key="t.id">

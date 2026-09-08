@@ -32,6 +32,7 @@ from customers.cpall.logic.logistic_plan_export import (
     group_has_data,
 )
 from customers.cpall.models import PlanRun, PlanRunLogisticFile
+from customers.cpall.models import LogisticGroup
 
 
 def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_override: dict = None) -> dict:
@@ -269,11 +270,19 @@ def get_plan_run_detail(plan_run_id: int) -> dict | None:
          "po_date": pi.po_date}
         for pi in plan_run.po_imports.all()
     ]
-    result["logistic_plans"] = [
-        {"group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
-         "error_message": lf.error_message}
-        for lf in plan_run.logistic_files.order_by("group_name")
-    ]
+    display_orders = dict(
+        LogisticGroup.objects.filter(is_active=True)
+        .values_list("group_name", "display_order")
+    )
+
+    result["logistic_plans"] = sorted(
+        [
+            {"group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
+            "error_message": lf.error_message}
+            for lf in plan_run.logistic_files.all()
+        ],
+        key=lambda x: (display_orders.get(x["group_name"], 9999), x["group_name"]),
+    )
     return result
 
 

@@ -113,7 +113,8 @@ def _find_sku_header_rows(ws) -> dict:
         if not barcode_cell:
             continue
 
-        m = re.match(r"\s*(\d{10,14})", str(barcode_cell))
+        # m = re.match(r"\s*(\d{10,14})", str(barcode_cell))
+        m = re.match(r"\s*['\"]?(\d{10,14})", str(barcode_cell))
         if not m:
             continue
         raw_barcode = m.group(1)

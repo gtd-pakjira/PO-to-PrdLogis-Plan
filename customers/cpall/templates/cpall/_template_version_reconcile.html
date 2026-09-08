@@ -1,0 +1,211 @@
+<div class="mt-4 border-t border-stone-100 pt-4">
+
+    {% if result.is_consistent %}
+
+    <div class="text-sm text-emerald-700">
+        ProductMaster ตรงกับ Template แล้ว
+    </div>
+
+    {% else %}
+
+    <div class="text-sm font-medium text-stone-700 mb-3">
+        รายการที่ต้องตรวจสอบ
+        <span class="text-amber-700">
+            ({{ result.mismatch_count }} รายการ)
+        </span>
+    </div>
+
+    {% if result.missing_in_product_master %}
+    <div class="mb-4">
+        <div class="text-xs font-medium text-stone-500 mb-2">
+            เพิ่มสินค้าใหม่
+        </div>
+
+        {% for item in result.missing_in_product_master %}
+        <div class="border-b border-stone-100 py-3">
+
+            <div class="flex items-center justify-between">
+                <div>
+                    <span class="mono text-sm text-stone-700">
+                        {{ item.barcode }}
+                    </span>
+                    <span class="ml-2 text-sm text-stone-600">
+                        {{ item.item_name }}
+                    </span>
+                </div>
+
+                <button
+                    type="button"
+                    class="text-amber-700 hover:underline font-medium text-sm"
+                    onclick="this.closest('.border-b').querySelector('.create-product-form').classList.toggle('hidden')"
+                >
+                    สร้างสินค้า
+                </button>
+            </div>
+
+            <div class="create-product-form hidden mt-3">
+
+                <form
+                    hx-post="{% url 'cpall:template_version_product_action' key version_id %}"
+                    hx-target="#reconcile-{{ version_id }}"
+                    hx-swap="innerHTML"
+                    class="space-y-3"
+                >
+                    {% csrf_token %}
+
+                    <input type="hidden" name="action" value="CREATE_PRODUCT">
+                    <input type="hidden" name="barcode" value="{{ item.barcode }}">
+
+                    <div class="grid grid-cols-2 gap-3">
+
+                        <div>
+                            <label class="block text-xs font-medium text-stone-600 mb-1">
+                                ชื่อสินค้า (ไทย)
+                            </label>
+                            <input
+                                type="text"
+                                name="name_th"
+                                value="{{ item.item_name }}"
+                                required
+                                class="block w-full rounded-md border border-stone-300 px-2.5 py-1.5 text-sm"
+                            >
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-stone-600 mb-1">
+                                ชื่อสินค้า (อังกฤษ)
+                            </label>
+                            <input
+                                type="text"
+                                name="name_en"
+                                class="block w-full rounded-md border border-stone-300 px-2.5 py-1.5 text-sm"
+                            >
+                        </div>
+
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+
+                        <div>
+                            <label class="block text-xs font-medium text-stone-600 mb-1">
+                                บรรจุ/ตะกร้า (ชิ้น)
+                            </label>
+                            <input
+                                type="number"
+                                name="pack_size"
+                                min="1"
+                                required
+                                class="block w-full rounded-md border border-stone-300 px-2.5 py-1.5 text-sm"
+                            >
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-stone-600 mb-1">
+                                ราคา
+                            </label>
+                            <input
+                                type="number"
+                                name="unit_price"
+                                step="0.01"
+                                required
+                                class="block w-full rounded-md border border-stone-300 px-2.5 py-1.5 text-sm"
+                            >
+                        </div>
+
+                    </div>
+
+                    <div>
+                        <button
+                            type="submit"
+                            class="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800 transition"
+                            hx-disabled-elt="this"
+                        >
+                            ยืนยันสร้างสินค้า
+                        </button>
+                    </div>
+
+                </form>
+
+            </div>
+
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+
+    {% if result.inactive_in_product_master %}
+    <div class="mb-4">
+        <div class="text-xs font-medium text-stone-500 mb-2">
+            เปิดใช้งานสินค้า
+        </div>
+
+        {% for item in result.inactive_in_product_master %}
+        <div class="flex items-center justify-between py-2 border-b border-stone-100 text-sm">
+            <div>
+                <span class="mono text-stone-700">{{ item.barcode }}</span>
+                <span class="ml-2 text-stone-600">{{ item.item_name }}</span>
+            </div>
+
+            <form
+                hx-post="{% url 'cpall:template_version_product_action' key version_id %}"
+                hx-target="#reconcile-{{ version_id }}"
+                hx-swap="innerHTML"
+                class="inline"
+            >
+                {% csrf_token %}
+                <input type="hidden" name="action" value="ACTIVATE">
+                <input type="hidden" name="barcode" value="{{ item.barcode }}">
+
+                <button
+                    type="submit"
+                    class="text-amber-700 hover:underline font-medium"
+                >
+                    เปิดใช้งาน
+                </button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+
+    {% if result.active_missing_in_template %}
+    <div class="mb-4">
+        <div class="text-xs font-medium text-stone-500 mb-2">
+            ปิดใช้งานสินค้า
+        </div>
+
+        {% for item in result.active_missing_in_template %}
+        <div class="flex items-center justify-between py-2 border-b border-stone-100 text-sm">
+            <div>
+                <span class="mono text-stone-700">{{ item.barcode }}</span>
+                <span class="ml-2 text-stone-600">{{ item.item_name }}</span>
+            </div>
+            <form
+                hx-post="{% url 'cpall:template_version_product_action' key version_id %}"
+                hx-target="#reconcile-{{ version_id }}"
+                hx-swap="innerHTML"
+                class="inline"
+                hx-confirm="ยืนยันปิดใช้งาน SKU {{ item.barcode }} ใน ProductMaster หรือไม่?"
+            >
+                {% csrf_token %}
+
+                <input type="hidden" name="action" value="DEACTIVATE">
+                <input type="hidden" name="barcode" value="{{ item.barcode }}">
+
+                <button
+                    type="submit"
+                    class="text-red-600 hover:underline font-medium"
+                >
+                    ปิดใช้งาน
+                </button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% endif %}
+
+</div>
