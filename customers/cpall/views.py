@@ -76,6 +76,13 @@ from customers.cpall.logic.excel_export import (
     find_po_sub_locations_missing_in_template,
 )
 
+from customers.cpall.logic.logistic_plan_export import (
+    get_group_templates,
+    group_has_data,
+    validate_logistic_plan,
+    LogisticPlanError,
+)
+
 UPLOAD_DIR = "customers/cpall/data/po_uploads"
 TEMP_UPLOAD_DIR = "customers/cpall/data/temp_uploads"
 
@@ -504,9 +511,9 @@ def new_plan_submit(request):
 
         return error_response(
             f"ไม่สามารถสร้างแผนได้ — พบ Barcode ใน PO "
-            f"ที่ไม่มีใน Template จำนวน {len(missing_in_template)} รายการ"
+            f"ที่ไม่มีใน Template แพลนผลิต จำนวน {len(missing_in_template)} รายการ"
             # f"\n{names}"
-            f"\nกรุณาตรวจสอบและแก้ไข Template ก่อนสร้าง Plan",
+            f"\nกรุณาตรวจสอบและแก้ไข Template แพลนผลิต ก่อนสร้าง Plan",
             status=409,
             detail_url=detail_url,
         )
@@ -521,10 +528,10 @@ def new_plan_submit(request):
 
         return error_response(
             f"ไม่สามารถสร้างแผนได้ — พบจุดส่งย่อยใน PO "
-            f"ที่ไม่มีใน Template จำนวน "
+            f"ที่ไม่มีใน Template แพลนผลิต จำนวน "
             f"{len(missing_sub_locations)} รายการ: "
             f"{locations}"
-            f"\nกรุณาตรวจสอบและแก้ไข Production Template ก่อนสร้าง Plan",
+            f"\nกรุณาตรวจสอบและแก้ไข Template แพลนผลิต ก่อนสร้าง Plan",
             status=409,
         )
 
@@ -542,6 +549,70 @@ def new_plan_submit(request):
             f"ไม่สามารถสร้างแผนได้ — จุดส่งย่อยซ้ำกันในหลายรอบ PO: {details}",
             status=409,
         )
+
+    # เช็ค Logistic Template เฉพาะ Group ที่มีข้อมูลใน PO ชุดนี้
+    logistic_errors = []
+
+    for group_name in get_group_templates():
+        if not group_has_data(po_import_ids, group_name):
+            continue
+
+        try:
+            result = validate_logistic_plan(
+                po_import_ids,
+                group_name,
+            )
+        except LogisticPlanError as e:
+            logistic_errors.append(
+                f"{group_name}: {e}"
+            )
+            continue
+
+        if result["missing_sub_locations"]:
+            locations = ", ".join(
+                result["missing_sub_locations"]
+            )
+
+            logistic_errors.append(
+                f"{group_name}: "
+                f"ไม่มีจุดส่งย่อยใน Template "
+                f"({locations})"
+            )
+
+        if result["overflow"]:
+            details = "; ".join(
+                f"{item['sub_location']} "
+                f"(ต้องใช้ {item['needed']} PO / "
+                f"รองรับ {item['available']} คอลัมน์)"
+                for item in result["overflow"]
+            )
+
+            logistic_errors.append(
+                f"{group_name}: "
+                f"จำนวนคอลัมน์ PO ไม่พอ — {details}"
+            )
+
+        if result["missing_barcodes"]:
+            logistic_errors.append(
+                f"{group_name}: "
+                f"พบ Barcode ที่ไม่มีใน Logistic Template "
+                f"จำนวน {len(result['missing_barcodes'])} รายการ"
+            )
+
+    if logistic_errors:
+        details = "\n".join(
+            f"- {error}"
+            for error in logistic_errors
+        )
+
+        return error_response(
+            "ไม่สามารถสร้างแผนได้ — "
+            "พบปัญหาใน Logistic Template:\n"
+            f"{details}\n"
+            "กรุณาตรวจสอบและแก้ไข Template ก่อนสร้าง Plan",
+            status=409,
+        )
+
 
     # เช็ค SKU ใหม่ที่ยังไม่มีใน ProductMaster
     unknown_skus = []

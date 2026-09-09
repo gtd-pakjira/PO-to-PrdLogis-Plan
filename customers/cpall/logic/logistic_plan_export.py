@@ -362,6 +362,163 @@ def read_buffer_qty_from_template(group_name: str = "รอบเช้าต่
 
     return result
 
+def validate_logistic_plan(po_import_ids, group_name: str) -> dict:
+    """
+    ตรวจสอบความพร้อมของ Logistic Plan สำหรับ Group นี้
+    โดยไม่สร้างหรือแก้ไขไฟล์ output
+
+    ตรวจ:
+    - Location
+    - PO Capacity
+    - Barcode
+    """
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    group_templates = get_group_templates()
+
+    if group_name not in group_templates:
+        raise LogisticPlanError(
+            f"ไม่รู้จักกลุ่มพื้นที่ '{group_name}' "
+            f"(ต้องเป็นหนึ่งใน {list(group_templates)})"
+        )
+
+    template_path, sheet_name = group_templates[group_name]
+
+    wb = openpyxl.load_workbook(template_path)
+    try:
+        ws = wb[sheet_name]
+
+        # ---------- ดึงข้อมูล PO ของ Group นี้ ----------
+        group_sub_locations = _get_sub_locations_for_group(group_name)
+
+        raw = get_grouped_quantities_by_sub_location_and_po(po_import_ids)
+        raw = [
+            row for row in raw
+            if row["sub_location"] in group_sub_locations
+        ]
+
+        # Group นี้ไม่มี PO → ไม่ต้อง validate / ไม่ต้องสร้างไฟล์
+        if not raw:
+            return {
+                "group_name": group_name,
+                "missing_sub_locations": [],
+                "missing_barcodes": [],
+                "overflow": [],
+            }
+
+        required_sub_locations = {
+            row["sub_location"]
+            for row in raw
+        }
+
+        ordered_barcodes = {
+            row["barcode"]
+            for row in raw
+        }
+
+        po_numbers_by_sub_location = defaultdict(set)
+
+        for row in raw:
+            po_numbers_by_sub_location[
+                row["sub_location"]
+            ].add(row["po_number"])
+
+        # ---------- อ่านโครงสร้าง Template ----------
+        line_no_col, header_row = _find_line_no_column(ws)
+        name_col = line_no_col + 1
+        qty_start_col = line_no_col + 3
+
+        qty_start_col, qty_end_col = _find_qty_column_range(
+            ws,
+            qty_start_col,
+            header_row,
+        )
+
+        # column -> (sub_location, po_index)
+        col_labels = {}
+        last_sub_location = None
+
+        for col in range(qty_start_col, qty_end_col + 1):
+            sub_loc, po_idx = _find_column_labels(
+                ws,
+                col,
+                header_row,
+            )
+
+            if sub_loc is None:
+                sub_loc = (
+                    last_sub_location
+                    if last_sub_location is not None
+                    else group_name
+                )
+
+            last_sub_location = sub_loc
+            col_labels[col] = (sub_loc, po_idx)
+
+        # Template ที่มีเพียง 1 PO column
+        if len(col_labels) == 1:
+            only_col = next(iter(col_labels))
+            sub_loc, po_idx = col_labels[only_col]
+
+            if po_idx is None:
+                col_labels[only_col] = (sub_loc, 1)
+
+        # จัดกลุ่มคอลัมน์ตาม sub_location
+        cols_by_sub_location = defaultdict(list)
+
+        for col, (sub_loc, po_idx) in col_labels.items():
+            cols_by_sub_location[sub_loc].append(
+                (po_idx, col)
+            )
+
+        for sub_loc in cols_by_sub_location:
+            cols_by_sub_location[sub_loc].sort(
+                key=lambda item: (item[0] is None, item[0])
+            )
+
+        template_sub_locations = set(
+            cols_by_sub_location.keys()
+        )
+
+        # ---------- 1. Location ----------
+        missing_sub_locations = sorted(
+            required_sub_locations - template_sub_locations
+        )
+
+        # ---------- 2. PO Capacity ----------
+        overflow = []
+
+        for sub_loc, po_numbers in po_numbers_by_sub_location.items():
+            available_cols = len(
+                cols_by_sub_location.get(sub_loc, [])
+            )
+
+            if len(po_numbers) > available_cols:
+                overflow.append(
+                    {
+                        "sub_location": sub_loc,
+                        "needed": len(po_numbers),
+                        "available": available_cols,
+                    }
+                )
+
+        # ---------- 3. Barcode ----------
+        header_rows = _find_sku_header_rows(ws, name_col)
+
+        missing_barcodes = sorted(
+            ordered_barcodes - set(header_rows.keys())
+        )
+
+        return {
+            "group_name": group_name,
+            "missing_sub_locations": missing_sub_locations,
+            "missing_barcodes": missing_barcodes,
+            "overflow": overflow,
+        }
+
+    finally:
+        wb.close()
 
 def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
     """
