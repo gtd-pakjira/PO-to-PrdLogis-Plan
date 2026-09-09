@@ -73,6 +73,7 @@ from customers.cpall.models import PlanRun
 
 from customers.cpall.logic.excel_export import (
     find_po_barcodes_missing_in_template,
+    find_po_sub_locations_missing_in_template,
 )
 
 UPLOAD_DIR = "customers/cpall/data/po_uploads"
@@ -482,7 +483,7 @@ def new_plan_submit(request):
     po_import_ids = [int(x) for x in request.POST.getlist("po_import_ids")]
     if not po_import_ids:
         return error_response("ต้องเลือก PO อย่างน้อย 1 รอบ")
-
+    
     # เช็ค Barcode ใน PO ว่ามีอยู่ใน Production Template หรือไม่
     missing_in_template = find_po_barcodes_missing_in_template(po_import_ids)
 
@@ -510,7 +511,24 @@ def new_plan_submit(request):
             detail_url=detail_url,
         )
 
+    # เช็ค Location ใน PO ว่ามีอยู่ใน Production Template หรือไม่
+    missing_sub_locations = find_po_sub_locations_missing_in_template(
+        po_import_ids
+    )
 
+    if missing_sub_locations:
+        locations = ", ".join(missing_sub_locations)
+
+        return error_response(
+            f"ไม่สามารถสร้างแผนได้ — พบจุดส่งย่อยใน PO "
+            f"ที่ไม่มีใน Template จำนวน "
+            f"{len(missing_sub_locations)} รายการ: "
+            f"{locations}"
+            f"\nกรุณาตรวจสอบและแก้ไข Production Template ก่อนสร้าง Plan",
+            status=409,
+        )
+
+    # เช็ค duplicate sub_location
     duplicate_sub_locations = check_duplicate_sub_locations(po_import_ids)
 
     if duplicate_sub_locations:

@@ -168,6 +168,50 @@ def find_po_barcodes_missing_in_template(
         if row["barcode"] not in template_barcodes
     ]
 
+def find_po_sub_locations_missing_in_template(
+    po_import_ids,
+    template_path: str = TEMPLATE_PATH,
+) -> list[str]:
+    """
+    ตรวจสอบ Location ของ PO ที่เลือกกับ Production Template ที่ใช้งานอยู่
+
+    PO ใช้ fc_code -> LocationMapping -> sub_location
+    แล้วตรวจว่า sub_location ที่ PO ต้องการ มีอยู่ใน Template ครบหรือไม่
+
+    ไม่บังคับว่า Template ต้องมีทุก Location ใน LocationMapping
+    และไม่สนจำนวนคอลัมน์ที่ซ้ำกันของ sub_location
+    """
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    from customers.cpall.models import LocationMapping, PoLine
+
+    po_fc_codes = (
+        PoLine.objects
+        .filter(po_import_id__in=po_import_ids)
+        .values_list("fc_code", flat=True)
+        .distinct()
+    )
+
+    required_sub_locations = set(
+        LocationMapping.objects
+        .filter(fc_code__in=po_fc_codes)
+        .exclude(sub_location__isnull=True)
+        .exclude(sub_location="")
+        .values_list("sub_location", flat=True)
+    )
+
+    wb = openpyxl.load_workbook(template_path)
+    try:
+        ws = wb[get_sheet_name()]
+        template_sub_locations = set(
+            _find_sub_location_columns(ws).values()
+        )
+    finally:
+        wb.close()
+
+    return sorted(required_sub_locations - template_sub_locations)
+
 def _renumber_visible_sku_rows(ws, header_rows: dict) -> int:
     """
     จัดเลขลำดับสินค้าใหม่เฉพาะ SKU ที่มองเห็นใน Production Plan
