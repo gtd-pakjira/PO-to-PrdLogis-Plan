@@ -1,0 +1,19 @@
+{% extends "admin/login.html" %}
+
+{% block extrahead %}
+{{ block.super }}
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        // วิ่งหาทุกแท็กในหน้า Login
+        document.querySelectorAll('p').forEach(function(el) {
+            if (el.textContent.includes('Dengun')) {
+                // ถ้าเจอคำว่า Dengun ให้ซ่อนก้อนนั้นทิ้งไปเลย
+                el.style.display = 'none';
+                
+                // หรือถ้าอยากเปลี่ยนข้อความแทนที่จะซ่อน ให้เปิดบรรทัดล่างนี้แทน:
+                // el.textContent = '© Pakji – 2026';
+            }
+        });
+    });
+</script>
+{% endblock %}
