@@ -1,0 +1,39 @@
+{% extends "cpall/base.html" %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-xl font-semibold text-stone-800 mb-4">
+        รายการ Barcode ที่ไม่พบใน Production Template
+    </h1>
+
+    {% if items %}
+        <div class="overflow-x-auto border border-stone-200 rounded-lg">
+            <table class="w-full text-sm">
+                <thead class="bg-stone-100">
+                    <tr>
+                        <th class="px-4 py-3 text-left">สินค้า</th>
+                        <th class="px-4 py-3 text-left">Barcode</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for item in items %}
+                    <tr class="border-t border-stone-200">
+                        <td class="px-4 py-3">
+                            {{ item.product_name }}
+                        </td>
+                        <td class="px-4 py-3 font-mono">
+                            {{ item.barcode }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="text-stone-500">
+            ไม่พบรายการ Barcode ที่ไม่ตรงกัน
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -71,6 +71,10 @@ from customers.cpall.logic.template_manager import (
 )
 from customers.cpall.models import PlanRun
 
+from customers.cpall.logic.excel_export import (
+    find_po_barcodes_missing_in_template,
+)
+
 UPLOAD_DIR = "customers/cpall/data/po_uploads"
 TEMP_UPLOAD_DIR = "customers/cpall/data/temp_uploads"
 
@@ -459,16 +463,53 @@ def new_plan_submit(request):
 
     is_htmx = request.headers.get("HX-Request") == "true"
 
-    def error_response(message, status=400):
+    def error_response(message, status=400, detail_url=None):
         if is_htmx:
+            toast = {
+                "message": message,
+                "level": "error",
+            }
+
+            if detail_url:
+                toast["detail_url"] = detail_url
+
             response = HttpResponse(status=status)
-            response["HX-Trigger"] = json.dumps({"toast": {"message": message, "level": "error"}})
+            response["HX-Trigger"] = json.dumps({"toast": toast})
             return response
+
         return render(request, "cpall/plan_error.html", {"error": message})
 
     po_import_ids = [int(x) for x in request.POST.getlist("po_import_ids")]
     if not po_import_ids:
         return error_response("ต้องเลือก PO อย่างน้อย 1 รอบ")
+
+    # เช็ค Barcode ใน PO ว่ามีอยู่ใน Production Template หรือไม่
+    missing_in_template = find_po_barcodes_missing_in_template(po_import_ids)
+
+    if missing_in_template:
+        names = ", ".join(
+            f"{item['barcode']} ({item['product_name']})"
+            for item in missing_in_template
+        )
+
+        detail_url = (
+            reverse("cpall:missing_template_items")
+            + "?"
+            + "&".join(
+                f"po_import_ids={po_import_id}"
+                for po_import_id in po_import_ids
+            )
+        )
+
+        return error_response(
+            f"ไม่สามารถสร้างแผนได้ — พบ Barcode ใน PO "
+            f"ที่ไม่มีใน Template จำนวน {len(missing_in_template)} รายการ"
+            # f"\n{names}"
+            f"\nกรุณาตรวจสอบและแก้ไข Template ก่อนสร้าง Plan",
+            status=409,
+            detail_url=detail_url,
+        )
+
 
     duplicate_sub_locations = check_duplicate_sub_locations(po_import_ids)
 
@@ -529,6 +570,27 @@ def new_plan_submit(request):
         return response
     return redirect_to_buffer_form(request, po_import_ids)
 
+def missing_template_items(request):
+    po_import_ids = [
+        int(x) for x in request.GET.getlist("po_import_ids")
+    ]
+
+    if not po_import_ids:
+        return render(
+            request,
+            "cpall/missing_template_items.html",
+            {"items": []},
+        )
+
+    items = find_po_barcodes_missing_in_template(po_import_ids)
+
+    return render(
+        request,
+        "cpall/missing_template_items.html",
+        {
+            "items": items,
+        },
+    )
 
 def _buffer_form_url(po_import_ids):
     from urllib.parse import urlencode

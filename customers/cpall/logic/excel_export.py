@@ -129,6 +129,45 @@ def _find_sku_header_rows(ws) -> dict:
 
     return mapping
 
+def find_po_barcodes_missing_in_template(
+    po_import_ids,
+    template_path: str = TEMPLATE_PATH,
+) -> list[dict]:
+    """
+    ตรวจสอบ Barcode ของ PO ที่เลือกกับ Production Template ที่ใช้งานอยู่
+
+    คืนเฉพาะ Barcode ที่มีอยู่ใน PO แต่ไม่พบใน Production Template
+    โดยไม่สนว่า Barcode นั้นมีหรือไม่มีใน ProductMaster
+    """
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    from customers.cpall.models import PoLine
+
+    po_rows = (
+        PoLine.objects
+        .filter(po_import_id__in=po_import_ids)
+        .order_by("barcode", "id")
+        .values("barcode", "item_name")
+        .distinct("barcode")
+    )
+
+    wb = openpyxl.load_workbook(template_path)
+    try:
+        ws = wb[get_sheet_name()]
+        template_barcodes = set(_find_sku_header_rows(ws))
+    finally:
+        wb.close()
+
+    return [
+        {
+            "barcode": row["barcode"],
+            "product_name": row["item_name"],
+        }
+        for row in po_rows
+        if row["barcode"] not in template_barcodes
+    ]
+
 def _renumber_visible_sku_rows(ws, header_rows: dict) -> int:
     """
     จัดเลขลำดับสินค้าใหม่เฉพาะ SKU ที่มองเห็นใน Production Plan

@@ -162,11 +162,13 @@
 
     <!-- Alert modal (error เท่านั้น) — ต้องกดปิดเอง ไม่หายเองเด็ดขาด (แก้ปัญหา toast หายเร็วเกินไป
          ด้านบน) — ใช้ event "toast" เดียวกับด้านบน แต่กรองเอาเฉพาะ level "error" -->
-    <div x-data="{ show: false, message: '' }"
-         @toast.window="
+    <div x-data="{ show: false, message: '', detailUrl: '' }"
+        @toast.window="
             if (($event.detail.level || 'success') !== 'error') return;
-            message = $event.detail.message; show = true;
-         "
+            message = $event.detail.message;
+            detailUrl = $event.detail.detail_url || '';
+            show = true;
+        "
          x-show="show" x-cloak
          class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4"
          @keydown.escape.window="show = false">
@@ -176,6 +178,17 @@
                 <p class="text-sm font-semibold text-stone-900">ทำรายการไม่สำเร็จ</p>
             </div>
             <p class="text-sm text-stone-700 whitespace-pre-line" x-text="message"></p>
+
+            <a
+                x-show="detailUrl"
+                :href="detailUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-4 block w-full rounded-md border border-stone-300 px-4 py-2 text-center text-sm font-medium text-stone-700 hover:bg-stone-50 transition"
+            >
+                ดูรายการที่ไม่พบใน Template ↗
+            </a>
+
             <button @click="show = false"
                     class="mt-4 w-full rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-900 transition">
                 ปิด
