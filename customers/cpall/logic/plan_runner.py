@@ -79,7 +79,7 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     recon = reconcile(po_import_ids)  # raise ReconciliationError ถ้าไม่ผ่าน (ปล่อยให้ผู้เรียนจัดการ)
     if not recon["passed"]:
         raise ReconciliationError(
-            f"ยอดไม่ตรงกัน {len(recon['mismatches'])} SKU: "
+            f"ยอดไม่ตรงกัน {len(recon['mismatches'])} สินค้า: "
             + ", ".join(m["barcode"] for m in recon["mismatches"])
         )
 

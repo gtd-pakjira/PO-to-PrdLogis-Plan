@@ -80,3 +80,8 @@ locations:
     name_th: "คลังทดสอบใหม่"
     group: "ทดสอบ"
     sub_location: "คลังทดสอบใหม่"
+
+  - fc_code: "FC99"
+    name_th: "FC99 คลังทดสอบ"
+    group: "ทดสอบ"
+    sub_location: "FC99 คลังทดสอบ"

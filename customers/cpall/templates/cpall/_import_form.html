@@ -1,7 +1,42 @@
 {% load crispy_forms_tags %}
+
 <div id="import-form-container" class="bg-white rounded-lg border border-stone-200 p-6 max-w-lg">
-    <form hx-post="{% url 'cpall:import_submit' %}" hx-target="#import-form-container" hx-swap="outerHTML"
+
+    {% if import_success %}
+        <div class="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <p class="text-sm font-semibold text-amber-900">
+                นำเข้า PO สำเร็จ
+            </p>
+
+            <p class="text-sm text-amber-800 mt-1">
+                พบสินค้า {{ missing_count }} รายการ
+                ที่ไม่มีใน Template แพลนผลิต
+            </p>
+
+            <a
+                href="{{ detail_url }}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-3 inline-block text-sm font-medium text-amber-900 underline hover:text-amber-700"
+            >
+                ดูรายการที่ไม่พบใน Template ↗
+            </a>
+        </div>
+
+        <a
+            href="{% url 'cpall:po_list' %}"
+            class="mb-5 block w-full rounded-md border border-stone-300 px-4 py-2.5 text-center
+                   text-sm font-medium text-stone-700 hover:bg-stone-50 transition"
+        >
+            ไปหน้า PO List
+        </a>
+    {% endif %}
+
+    <form hx-post="{% url 'cpall:import_submit' %}"
+          hx-target="#import-form-container"
+          hx-swap="outerHTML"
           hx-encoding="multipart/form-data">
+
         {% csrf_token %}
         {{ form|crispy }}
 

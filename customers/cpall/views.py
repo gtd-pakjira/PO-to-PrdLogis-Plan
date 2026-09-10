@@ -96,16 +96,28 @@ def index(request):
 
 def po_list(request):
     """หน้ารายการ PO ทั้งหมด — นำเข้าใหม่/ติ๊กเลือกสร้างแผน/ลบ/ค้นหา/แบ่งหน้า ได้จากหน้านี้"""
+
     from urllib.parse import urlencode
+
     page = int(request.GET.get("page", 1) or 1)
     page_size = int(request.GET.get("page_size", 10) or 10)
     search = request.GET.get("q", "").strip()
+
     result = list_po_imports_paginated(page=page, page_size=page_size, search=search)
+
     base_qs = ("&" + urlencode({"q": search})) if search else ""
+
+    import_warning = request.session.pop("import_warning", None)
+
     return render(request, "cpall/po_list.html", {
-        "po_imports": result["items"], "total": result["total"], "page": result["page"],
-        "page_size": result["page_size"], "total_pages": result["total_pages"],
-        "search": search, "base_qs": base_qs,
+        "po_imports": result["items"],
+        "total": result["total"],
+        "page": result["page"],
+        "page_size": result["page_size"],
+        "total_pages": result["total_pages"],
+        "search": search,
+        "base_qs": base_qs,
+        "import_warning": import_warning,
     })
 
 
@@ -224,32 +236,47 @@ def import_submit(request):
     if os.path.exists(saved_path):
         os.remove(saved_path)
 
+    # ต่อ flow เดิม — เช็ค location ที่ไม่รู้จักก่อน
     unknown_locations = check_unknown_locations(po_import_id)
     if unknown_locations:
-        # ไม่ใช่ dead-end แล้ว — พาไปหน้าเลือก mapping เลย (ข้อมูล PO import สำเร็จแล้วจริงๆ ใน DB
-        # แค่ยังมีรหัสสถานที่ที่ไม่รู้จักกลุ่มพื้นที่ ให้ Admin เลือกตรงนี้ได้เลย)
         if is_htmx:
             response = HttpResponse(status=200)
-            response["HX-Redirect"] = reverse("cpall:resolve_locations", args=[po_import_id])
+            response["HX-Redirect"] = reverse(
+                "cpall:resolve_locations",
+                args=[po_import_id],
+            )
             return response
-        return redirect("cpall:resolve_locations", po_import_id=po_import_id)
+        return redirect(
+            "cpall:resolve_locations",
+            po_import_id=po_import_id,
+        )
 
-    unknown_skus = check_unknown_skus(po_import_id)
-    if unknown_skus:
-        # ต่างจาก location ตรงที่ไม่บังคับ (product_master ไม่มีผลต่อการคำนวณเลย) แต่ยังพาไปหน้านี้
-        # เพื่อ "แนะนำ" ให้กรอกไว้ให้ครบ (มีปุ่มข้ามในหน้านั้นให้กดผ่านได้เลยถ้าไม่อยากกรอกตอนนี้)
-        if is_htmx:
-            response = HttpResponse(status=200)
-            response["HX-Redirect"] = reverse("cpall:resolve_products", args=[po_import_id])
-            return response
-        return redirect("cpall:resolve_products", po_import_id=po_import_id)
+    # Product ตรวจจาก Active Production Template
+    # ไม่ตรวจ ProductMaster และไม่พาไป resolve_products
+    missing_in_template = find_po_barcodes_missing_in_template([po_import_id])
+    print("DEBUG missing_in_template:", missing_in_template)
 
-    # สำเร็จสมบูรณ์ -> ไปหน้า PO ทั้งหมดเลย (เห็นผลลัพธ์อยู่ในบริบทของรายการจริง แทนที่จะเป็นหน้า
-    # สรุปผลโดดๆ ที่ต้องกดออกไปอีกที)
+    if missing_in_template:
+        detail_url = (
+            reverse("cpall:missing_template_items")
+            + f"?po_import_ids={po_import_id}"
+        )
+
+        request.session["import_warning"] = {
+            "message": (
+                f"นำเข้า PO สำเร็จ — พบสินค้า {len(missing_in_template)} รายการ "
+                "ที่ไม่มีใน Template แพลนผลิต"
+            ),
+            "detail_url": detail_url,
+        }
+
+        print("DEBUG import_warning SET:", request.session.get("import_warning"))
+
     if is_htmx:
         response = HttpResponse(status=200)
         response["HX-Redirect"] = reverse("cpall:po_list")
         return response
+
     return redirect("cpall:po_list")
 
 
@@ -305,13 +332,29 @@ def confirm_duplicates(request):
                 return response
             return redirect("cpall:resolve_locations", po_import_id=po_import_id)
 
-        unknown_skus = check_unknown_skus(po_import_id)
-        if unknown_skus:
-            if is_htmx:
-                response = HttpResponse(status=200)
-                response["HX-Redirect"] = reverse("cpall:resolve_products", args=[po_import_id])
-                return response
-            return redirect("cpall:resolve_products", po_import_id=po_import_id)
+        missing_in_template = find_po_barcodes_missing_in_template([po_import_id])
+
+        if missing_in_template:
+            detail_url = (
+                reverse("cpall:missing_template_items")
+                + f"?po_import_ids={po_import_id}"
+            )
+
+            request.session["import_warning"] = {
+                "message": (
+                    f"นำเข้า PO สำเร็จ — พบสินค้า {len(missing_in_template)} รายการ "
+                    "ที่ไม่มีใน Template แพลนผลิต"
+                ),
+                "detail_url": detail_url,
+            }
+        # ไม่ใช่แล้ว ใช้ template จัดการเอา
+        # unknown_skus = check_unknown_skus(po_import_id)
+        # if unknown_skus:
+        #     if is_htmx:
+        #         response = HttpResponse(status=200)
+        #         response["HX-Redirect"] = reverse("cpall:resolve_products", args=[po_import_id])
+        #         return response
+        #     return redirect("cpall:resolve_products", po_import_id=po_import_id)
 
         if is_htmx:
             response = HttpResponse(status=200)
@@ -356,14 +399,15 @@ def resolve_locations(request, po_import_id):
                 return render(request, "cpall/_resolve_locations_form.html", context)
             return render(request, "cpall/resolve_locations.html", context)
 
+        # ไม่ใช้แล้ว ใช้ template จัดการเอา
         # location ครบหมดแล้ว -> เช็คต่อว่ามีสินค้าที่ยังไม่รู้จักไหม (ไม่บังคับ แค่แนะนำ)
-        unknown_skus = check_unknown_skus(po_import_id)
-        if unknown_skus:
-            if is_htmx:
-                response = HttpResponse(status=200)
-                response["HX-Redirect"] = reverse("cpall:resolve_products", args=[po_import_id])
-                return response
-            return redirect("cpall:resolve_products", po_import_id=po_import_id)
+        # unknown_skus = check_unknown_skus(po_import_id)
+        # if unknown_skus:
+        #     if is_htmx:
+        #         response = HttpResponse(status=200)
+        #         response["HX-Redirect"] = reverse("cpall:resolve_products", args=[po_import_id])
+        #         return response
+        #     return redirect("cpall:resolve_products", po_import_id=po_import_id)
 
         if is_htmx:
             response = HttpResponse(status=200)
