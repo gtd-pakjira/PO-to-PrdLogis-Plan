@@ -28,7 +28,11 @@ from collections import defaultdict
 import openpyxl
 
 from customers.cpall.logic.date_utils import fixed_date_resolver, update_date_headers
-from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location_and_po
+from customers.cpall.logic.grouping import (
+    get_grouped_quantities_by_sub_location_and_po,
+    get_plan_date_context,
+    MORNING_GROUP_NAME,
+)
 
 
 def get_po_number_by_column_label(po_import_ids: list[int], group_name: str) -> dict:
@@ -564,18 +568,24 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str,buffer
     wb = openpyxl.load_workbook(template_path)
     ws = wb[sheet_name]
 
-    from customers.cpall.logic.grouping import get_dates_by_sub_location
-    group_sub_locations_for_dates = _get_sub_locations_for_group(group_name)
-    dates_by_sub_location = get_dates_by_sub_location(po_import_ids)
-    # เอาวันที่ของจุดส่งย่อยจุดแรกในกลุ่มนี้ที่มีข้อมูล (ทุกจุดในกลุ่มเดียวกันควรมาจากรอบเดียวกันอยู่แล้ว)
-    plan_dates = next(
-        (dates_by_sub_location[s] for s in group_sub_locations_for_dates if s in dates_by_sub_location),
-        (None, None),
-    )
-    if plan_dates[0] and plan_dates[1]:
-        n = update_date_headers(ws, fixed_date_resolver(*plan_dates))
-        print(f"[logistic_plan_export:{group_name}] อัปเดตวันที่ในหัวไฟล์ {n} จุด "
-              f"(ผลิต={plan_dates[0]}, PO={plan_dates[1]})")
+    date_context = get_plan_date_context(po_import_ids)
+
+    if group_name == MORNING_GROUP_NAME:
+        plan_dates = date_context["morning"]
+    else:
+        plan_dates = date_context["afternoon"]
+
+    if plan_dates is not None:
+        n = update_date_headers(
+            ws,
+            fixed_date_resolver(*plan_dates),
+        )
+
+        print(
+            f"[logistic_plan_export:{group_name}] "
+            f"อัปเดตวันที่ในหัวไฟล์ {n} จุด "
+            f"(ผลิต={plan_dates[0]}, PO={plan_dates[1]})"
+        )
 
     line_no_col, header_row = _find_line_no_column(ws)
     name_col = line_no_col + 1

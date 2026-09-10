@@ -14,11 +14,12 @@ excel_export.py — Module 4: Excel Exporter (Production Plan)
 """
 import re
 import sys
+from unittest import case
 
 import openpyxl
 
 from customers.cpall.logic.date_utils import find_merged_date_header_column, update_date_headers
-from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location
+from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location,get_plan_date_context
 from customers.cpall.logic.logistic_plan_export import SUB_LOCATION_LABEL_CORRECTIONS
 
 TEMPLATE_PATH = "customers/cpall/excel_templates/production_plan_template.xlsx"
@@ -362,10 +363,14 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
     (เช่น ตอน Admin กรอกยอดเผื่อผ่านหน้าเว็บเอง — ดู UC-4) ถ้าไม่ระบุ (None) จะ fallback ไปอ่านจากเทมเพลต
     เหมือนเดิม (behavior เดิมที่จำลอง Admin กรอกไว้ในไฟล์)
     """
-    from customers.cpall.logic.grouping import get_covered_sub_locations, get_dates_by_sub_location
+    from customers.cpall.logic.grouping import (
+        get_covered_sub_locations,
+        get_plan_date_context,
+    )
+
     sub_location_qty = get_grouped_quantities_by_sub_location(po_import_ids)
     covered_sub_locations = get_covered_sub_locations(po_import_ids)
-    dates_by_sub_location = get_dates_by_sub_location(po_import_ids)
+    date_context = get_plan_date_context(po_import_ids)
 
     # จัดรูปเป็น {barcode: {sub_location: qty}}
     qty_by_barcode = {}
@@ -377,45 +382,35 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
 
     col_to_sub_location = _find_sub_location_columns(ws)
 
+    from customers.cpall.models import LocationMapping
+
+    sub_locations = set(col_to_sub_location.values())
+
+    group_by_sub_location = dict(
+        LocationMapping.objects
+        .filter(sub_location__in=sub_locations)
+        .values_list("sub_location", "group")
+    )
+
     def date_resolver(col):
-        """หาว่าคอลัมน์นี้ (หัว 'วันที่...') สังกัดจุดส่งย่อยไหน แล้วคืนวันที่ของรอบที่จุดนั้นสังกัด
-        (เซลล์หัว 'วันที่' อยู่คอลัมน์เดียวกับจุดส่งย่อยแรกใต้หัวนั้นเสมอ เพราะเป็น merged cell)"""
         sub_loc = col_to_sub_location.get(col)
-        if sub_loc is None or sub_loc not in dates_by_sub_location:
+
+        if sub_loc is None:
             return None
-        production_date, po_date = dates_by_sub_location[sub_loc]
-        if production_date is None or po_date is None:
-            return None
-        return production_date, po_date
+
+        group_name = group_by_sub_location.get(sub_loc)
+
+        if group_name == "รอบเช้าต่างจังหวัด":
+            return date_context["morning"]
+
+        return date_context["afternoon"]
 
     n = update_date_headers(ws, date_resolver)
-    print(f"[excel_export] อัปเดตวันที่ในหัวไฟล์ {n} จุด (แต่ละจุดใช้วันที่ของรอบ PO ที่ตัวเองสังกัด)")
 
-    # M5 (หัวไฟล์หลัก "วันที่ผลิต ... ส่งวันที่ PO ...") ไม่ได้ผูกกับจุดส่งย่อยไหนโดยเฉพาะ (เป็น header
-    # รวมทั้งไฟล์) — date_resolver ด้านบน (ที่ผูกกับ col_to_sub_location) จึงไม่เคยแก้ M5 เลย ยังคงเป็น
-    # ค่าเก่าที่ติดมากับเทมเพลตตลอด (เจอบั๊กนี้จริงจากการทดสอบ) — ใช้วันที่ของ "รอบบ่าย" เสมอ (ยืนยันกับ
-    # Admin แล้วว่ารอบเช้าต่างจังหวัดมาถึงวันเดียวกับวันที่ PO ของรอบบ่าย จึงใช้รอบบ่ายเป็นตัวแทนของทั้งไฟล์)
-    from customers.cpall.logic.plan_view_data import get_return_group_sub_locations
-    return_group_sub_locations = get_return_group_sub_locations()
-    afternoon_dates = None
-    for sub_loc, dates in dates_by_sub_location.items():
-        if sub_loc not in return_group_sub_locations and dates[0] is not None and dates[1] is not None:
-            afternoon_dates = dates
-            break
-    if afternoon_dates is not None:
-        # กรองเอาเฉพาะ merged "วันที่" ที่ column ตรงกับจุดส่งกลุ่มรอบเช้า (RETURN_GROUP) เท่านั้น —
-        # เทมเพลตนี้มี merged "วันที่" มากกว่า 1 จุด (G5:L6 ของรอบบ่าย ถูกต้องอยู่แล้วเพราะ date_resolver
-        # ด้านบนจัดการให้ตรงกับจุดส่งจริง กับ M5:Q6 ของรอบเช้าที่เป็นจุดมีปัญหา) — ถ้าไม่กรองจะได้ค่า
-        # merged range แรกที่เจอ (G5:L6) แทนที่จะเป็นตัวที่ต้องการแก้จริง (M5:Q6)
-        m5_col = find_merged_date_header_column(
-            ws, row=5, col_filter=lambda c: col_to_sub_location.get(c) in return_group_sub_locations,
-        )
-        if m5_col is not None:
-            m5_updated = update_date_headers(
-                ws, lambda col: afternoon_dates if col == m5_col else None,
-                search_rows=range(1, 8), search_cols=range(m5_col, m5_col + 1),
-            )
-            print(f"[excel_export] อัปเดต M5 (หัวไฟล์หลัก) ด้วยวันที่รอบบ่าย: {m5_updated} จุด")
+    print(
+        f"[excel_export] อัปเดตวันที่ในหัวไฟล์ {n} จุด "
+        f"(แต่ละจุดใช้วันที่ของรอบ PO ที่ตัวเองสังกัด)"
+    )
 
     total_col = _find_total_column(ws)
     header_rows = _find_sku_header_rows(ws)
