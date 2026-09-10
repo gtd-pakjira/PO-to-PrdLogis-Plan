@@ -329,6 +329,33 @@ def _find_buffer_column(ws) -> int:
                 return col
     raise LogisticPlanError("หาคอลัมน์ 'ยอดเผื่อ' ในเทมเพลตนี้ไม่เจอ")
 
+def write_buffer_qty(
+    ws,
+    header_rows: dict,
+    buffer_by_barcode: dict,
+) -> int:
+    """
+    เขียนยอดเผื่อของ Logistic Plan
+    ใช้กับ Template ที่มีคอลัมน์ 'ยอดเผื่อ' เท่านั้น
+    """
+
+    buffer_col = _find_buffer_column(ws)
+    written = 0
+
+    for barcode, row in header_rows.items():
+        buffer_qty = buffer_by_barcode.get(barcode)
+
+        # ต้องใช้ .value = โดยตรง
+        # เพื่อให้ None สามารถล้างค่าที่ค้างจาก template ได้จริง
+        ws.cell(
+            row=row,
+            column=buffer_col,
+        ).value = buffer_qty
+
+        if buffer_qty is not None:
+            written += 1
+
+    return written
 
 def read_buffer_qty_from_template(group_name: str = "รอบเช้าต่างจังหวัด") -> dict:
     """
@@ -520,7 +547,7 @@ def validate_logistic_plan(po_import_ids, group_name: str) -> dict:
     finally:
         wb.close()
 
-def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
+def export_logistic_plan(po_import_ids, group_name: str, output_path: str,buffer_override: dict = None,):
     """
     po_import_ids: รับได้ทั้ง int เดี่ยว หรือ list ของ int
     วันที่ในหัวไฟล์: ดึงจากวันที่ที่ผูกไว้กับรอบ PO ที่มีข้อมูลของกลุ่มนี้ (ไฟล์นี้มาจากรอบเดียวเสมอ
@@ -619,6 +646,22 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
     }
 
     header_rows = _find_sku_header_rows(ws, name_col)
+
+    # ---------- ยอดเผื่อ ----------
+    # มีเฉพาะ Template "รอบเช้าต่างจังหวัด"
+    # ใช้ค่าที่ Admin กรอกผ่านเว็บเป็น source of truth
+    if group_name == "รอบเช้าต่างจังหวัด" and buffer_override is not None:
+        buffer_written = write_buffer_qty(
+            ws,
+            header_rows,
+            buffer_override,
+        )
+
+        print(
+            f"[logistic_plan_export:{group_name}] "
+            f"เขียนยอดเผื่อ {buffer_written} SKU"
+        )
+
     filled_skus, missing_in_template = set(), set()
 
     # สำคัญ: เคลียร์ทุกช่องยอดสั่ง (qty_start_col..qty_end_col) ของทุกแถว SKU ในเทมเพลตนี้ก่อนเขียนใหม่

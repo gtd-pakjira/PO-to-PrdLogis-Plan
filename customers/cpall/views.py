@@ -254,7 +254,6 @@ def import_submit(request):
     # Product ตรวจจาก Active Production Template
     # ไม่ตรวจ ProductMaster และไม่พาไป resolve_products
     missing_in_template = find_po_barcodes_missing_in_template([po_import_id])
-    print("DEBUG missing_in_template:", missing_in_template)
 
     if missing_in_template:
         detail_url = (
@@ -270,7 +269,6 @@ def import_submit(request):
             "detail_url": detail_url,
         }
 
-        print("DEBUG import_warning SET:", request.session.get("import_warning"))
 
     if is_htmx:
         response = HttpResponse(status=200)
@@ -821,12 +819,20 @@ def buffer_form_submit(request):
 
     buffer_override = {}
     for key, val in request.POST.items():
-        if key.startswith("buffer_") and val.strip():
-            barcode = key[len("buffer_"):]
-            try:
-                buffer_override[barcode] = float(val)
-            except ValueError:
-                pass
+        if not key.startswith("buffer_"):
+            continue
+
+        barcode = key[len("buffer_"):]
+        value = val.strip()
+
+        if value == "":
+            buffer_override[barcode] = 0
+            continue
+
+        try:
+            buffer_override[barcode] = float(value)
+        except ValueError:
+            pass
 
     try:
         result = run_plan(po_import_ids, buffer_override=buffer_override)
@@ -904,13 +910,22 @@ def edit_buffer_form_submit(request, plan_run_id):
         return render(request, "cpall/plan_error.html", {"error": message})
 
     buffer_override = {}
+
     for key, val in request.POST.items():
-        if key.startswith("buffer_") and val.strip():
-            barcode = key[len("buffer_"):]
-            try:
-                buffer_override[barcode] = float(val)
-            except ValueError:
-                pass
+        if not key.startswith("buffer_"):
+            continue
+
+        barcode = key[len("buffer_"):]
+        value = val.strip()
+
+        if value == "":
+            buffer_override[barcode] = 0
+            continue
+
+        try:
+            buffer_override[barcode] = float(value)
+        except ValueError:
+            pass
 
     try:
         edit_buffer_and_regenerate(plan_run_id, buffer_override)

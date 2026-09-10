@@ -58,6 +58,20 @@ def _json_safe(value):
     return value
 
 
+def _safe_str_strip(series):
+    """
+    แปลงคอลัมน์เป็น string + strip โดยรักษาค่าว่างเปล่า (NaN/None) ไว้เป็น None จริงๆ
+
+    *** เจอบั๊กจริง (2025-09-10) ***: เดิมใช้ `series.astype(str).str.strip()` ตรงๆ — แต่
+    `astype(str)` แปลง NaN เป็น "ตัวอักษร" string "nan" (ไม่ใช่ NaN จริง) เพราะงั้น
+    `df.dropna(subset=["po_number", "barcode"])` ที่ใช้ตัดแถวว่าง/สรุปท้ายไฟล์ทิ้ง **ไม่เคยตัดอะไร
+    ออกได้เลยจริงๆ ตั้งแต่แรก** (isna() คืน False เสมอเพราะเจอ string "nan" ไม่ใช่ NaN) — ไม่เคยถูก
+    สังเกตเห็นมานานเพราะไฟล์ PO จริงจาก CP All ไม่เคยมีแถวที่ barcode ว่างเปล่าเป๊ะจริงๆ จนมาเจอตอน
+    เขียน unit test ทดสอบ edge case นี้โดยเฉพาะ — ต้องเช็ค NaN ก่อนแปลงเป็น string เสมอ
+    """
+    return series.apply(lambda v: str(v).strip() if pd.notna(v) else None)
+
+
 def _to_date(value):
     """แปลงวันที่รูปแบบ 'DD/MM/YYYY' (ปี พ.ศ. หรือ ค.ศ. ตามที่ระบบลูกค้าส่งมา) เป็น datetime.date"""
     if value in (None, ""):
@@ -118,14 +132,14 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
     # เปลี่ยนชื่อคอลัมน์ที่มีอยู่แล้วในระบบผ่าน Admin panel (ไม่ใช่แค่เพิ่ม/ลบคอลัมน์ใหม่) การดึงข้อมูล
     # แถวนี้จะยังหาคอลัมน์ชื่อเดิมไม่เจอ — ต้องแก้โค้ดตรงนี้คู่กันเสมอถ้าจะรองรับ Admin เปลี่ยนชื่อคอลัมน์
     # ที่มีอยู่แล้วจริงๆ (ยังไม่ได้ทำ เพราะเป็น refactor ใหญ่กว่านี้มาก)
-    out["po_number"] = df["Purchase Order Number"].astype(str).str.strip()
+    out["po_number"] = _safe_str_strip(df["Purchase Order Number"])
     out["po_date"] = df["Purchase Order Date"].apply(_to_date)
     out["delivery_date"] = df["Delivery Date"].apply(_to_date)
     out["delivery_time"] = df["Delivery Time"].astype(str)
-    out["fc_code"] = df["Delivery Location Number"].astype(str).str.strip()
+    out["fc_code"] = _safe_str_strip(df["Delivery Location Number"])
     out["delivery_location"] = df["Delivery Location"]
     out["line_no"] = pd.to_numeric(df["Line Item Number"], errors="coerce")
-    out["barcode"] = df["Item Number (Product Code)"].astype(str).str.strip()
+    out["barcode"] = _safe_str_strip(df["Item Number (Product Code)"])
     out["item_name"] = df["Item Name "]
     out["qty_ordered"] = pd.to_numeric(df["Ordered Quantity"], errors="coerce")
     out["unit_type"] = df["Unit Type "]

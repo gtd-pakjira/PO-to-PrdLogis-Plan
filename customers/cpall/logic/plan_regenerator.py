@@ -33,6 +33,7 @@ from customers.cpall.logic.logistic_plan_export import (
     _find_qty_column_range,
     _renumber_logistic_sku_rows,
     get_group_templates,
+    _find_buffer_column,
 )
 from customers.cpall.logic.logistic_plan_export import _find_sku_header_rows as _find_lp_sku_header_rows
 
@@ -212,6 +213,21 @@ def regenerate_logistic_plan_bytes(plan_run_id: int, group_name: str) -> bytes:
         entry = by_barcode.setdefault(r.barcode, {})
         entry[r.column_label] = r.qty
 
+        production_buffer_rows = PlanSkuResult.objects.filter(
+        plan_run_id=plan_run_id,
+        sheet_type="production",
+        buffer_qty__isnull=False,
+    ).values(
+        "barcode",
+        "buffer_qty",
+    )
+
+    buffer_by_barcode = {
+        row["barcode"]: float(row["buffer_qty"])
+        for row in production_buffer_rows
+        if row["buffer_qty"] is not None
+    }
+    
     wb = openpyxl.load_workbook(logistic_file.template_version.file_path)
     _, sheet_name = get_group_templates()[group_name]
     ws = wb[sheet_name]
@@ -241,6 +257,21 @@ def regenerate_logistic_plan_bytes(plan_run_id: int, group_name: str) -> bytes:
         label_to_col[label] = col
 
     header_rows = _find_lp_sku_header_rows(ws, name_col)
+
+    # ---------- ยอดเผื่อ ----------
+    # ตอนนี้มีเฉพาะ "รอบเช้าต่างจังหวัด"
+    # ใช้ค่าจาก Production Plan result ซึ่งเป็น source of truth ของยอดเผื่อ
+    if group_name == "รอบเช้าต่างจังหวัด":
+        buffer_col = _find_buffer_column(ws)
+
+        for barcode, row in header_rows.items():
+            buffer_qty = buffer_by_barcode.get(barcode)
+
+            # ใช้ .value = โดยตรงเพื่อให้ None ล้างค่าที่ค้างใน template ได้
+            ws.cell(
+                row=row,
+                column=buffer_col,
+            ).value = buffer_qty
 
     for barcode, row in header_rows.items():
         data = by_barcode.get(barcode)

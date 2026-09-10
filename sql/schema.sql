@@ -309,6 +309,17 @@ CREATE INDEX IF NOT EXISTS idx_plan_run_logistic_run ON plan_run_logistic_file(p
 ALTER TABLE product_master ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE location_mapping ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
+-- *** CRITICAL FIX (2025-09-10) — updated_at ขาด migration มาตั้งแต่ต้น ***
+-- product_master/location_mapping มี "updated_at" อยู่ใน CREATE TABLE statement ด้านบนแล้ว (บรรทัด
+-- ~56, ~70) แต่บรรทัดนั้นทำงานแค่ตอน "fresh install" เท่านั้น (ผ่าน IF NOT EXISTS guard) —
+-- database ที่เคย migrate ผ่านมาก่อนหน้านี้แล้ว (มี table อยู่แล้ว) จะไม่มี column นี้เลย เพราะไม่เคยมี
+-- ALTER TABLE คู่กันมาก่อน (ต่างจาก is_active ด้านบนที่ทำถูกต้อง) — เจอบั๊กร้ายแรงจากการตรวจสอบ dev
+-- branch: Django Admin's list_display ของ ProductMaster/LocationMapping ใส่ "updated_at" ไว้ด้วย ทำให้
+-- หน้า Admin (ที่ใช้เปิด/ปิดสินค้าทุกวัน) crash ทันทีที่เปิดถ้า database เป็นเวอร์ชันเก่าที่เคย migrate
+-- มาก่อน — เพิ่ม migration ที่ขาดหายไปตรงนี้ (รันซ้ำได้ปลอดภัย ไม่กระทบข้อมูลเดิม)
+ALTER TABLE product_master ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();
+ALTER TABLE location_mapping ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();
+
 -- ---------- ผลลัพธ์ต่อ SKU/คอลัมน์ (Phase 1.6 sub-phase 2) ----------
 -- "1 แถว = 1 SKU x 1 คอลัมน์" (เช่น "บางบัวทอง" หรือ "ชลบุรี PO2") — เก็บยอดสั่งจริง (ไม่ใช่จากสูตร
 -- จำลอง) และค่าที่ LibreOffice คำนวณจากสูตรจริงในเทมเพลต (pack_text/return_qty/basket_total)

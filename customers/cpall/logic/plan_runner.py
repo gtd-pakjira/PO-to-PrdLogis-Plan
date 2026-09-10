@@ -105,7 +105,7 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
 
         group_output_path = f"{output_dir}/{group_name}.xlsx"
         try:
-            export_logistic_plan(po_import_ids, group_name, group_output_path)
+            export_logistic_plan(po_import_ids, group_name, group_output_path,buffer_override=buffer_override,)
             logistic_results[group_name] = {"status": "success", "path": group_output_path, "error": None}
         except (LogisticPlanError, Exception) as e:
             logistic_results[group_name] = {"status": "failed", "path": None, "error": str(e)}
@@ -372,7 +372,7 @@ def edit_buffer_and_regenerate(plan_run_id: int, buffer_override: dict) -> dict:
             continue
         logistic_path = f"{output_dir}/{group_name}.xlsx"
         try:
-            export_logistic_plan(po_import_ids, group_name, logistic_path)
+            export_logistic_plan(po_import_ids, group_name, logistic_path, buffer_override=buffer_override,)
             logistic_results[group_name] = {"status": "success", "path": logistic_path, "error": None}
         except (LogisticPlanError, Exception) as e:
             logistic_results[group_name] = {"status": "failed", "path": None, "error": str(e)}

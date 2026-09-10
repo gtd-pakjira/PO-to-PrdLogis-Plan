@@ -615,9 +615,12 @@ def list_versions(key: str) -> list[dict]:
 
 def upload_new_version(key: str, new_filepath: str, original_filename: str = None) -> dict:
     """
-    ตรวจสอบไฟล์ใหม่ก่อน (validate_template) แล้วสร้างเป็นเวอร์ชันใหม่ + ตั้งเป็น active ทันที
-    เวอร์ชันเก่าไม่ได้ถูกลบเลย แค่ไม่ active แล้ว (กู้คืนได้เสมอผ่าน restore_to_version)
-    ถ้า validate ไม่ผ่าน จะ raise ทันที ไม่แตะเวอร์ชัน/ไฟล์ live เดิมเลย
+    ตรวจสอบไฟล์ใหม่ก่อน (validate_template) แล้วสร้างเป็นเวอร์ชันใหม่ — แต่ยังไม่ set is_active=True
+    ทันที เสมอ (ทั้งกรณีมี mismatch กับ ProductMaster หรือไม่มีก็ตาม) ต้องรอ Admin ยืนยันผ่านหน้า
+    reconcile/confirm ก่อนเท่านั้น ถึงจะ activate จริงผ่าน template_version_activate() — ป้องกันไม่ให้
+    apply template ใหม่โดยไม่ผ่านการตรวจสอบ ProductMaster เลย เวอร์ชันเก่าไม่ได้ถูกลบเลย แค่ไม่ active
+    แล้ว (กู้คืนได้เสมอผ่าน restore_to_version) ถ้า validate ไม่ผ่าน จะ raise ทันที ไม่แตะเวอร์ชัน/ไฟล์
+    live เดิมเลย
     original_filename: ชื่อไฟล์ตอน Admin เลือกอัปโหลดจริง (เก็บไว้ให้ดูย้อนหลังในหน้าประวัติเวอร์ชัน)
     """
     if key not in get_template_registry():
@@ -634,16 +637,6 @@ def upload_new_version(key: str, new_filepath: str, original_filename: str = Non
     version_path = _version_file_path(key, next_version)
     os.makedirs(os.path.dirname(version_path), exist_ok=True)
     shutil.move(new_filepath, version_path)
-
-    # TemplateVersion.objects.filter(template_key=key, is_active=True).update(is_active=False)
-    # new_version = TemplateVersion.objects.create(
-    #     customer_id=get_cpall_customer_id(), template_key=key, version_number=next_version,
-    #     file_path=version_path, original_filename=original_filename, is_active=True,
-    #     validation_summary=f"sku_count={validation_result.get('sku_count')}",
-    # )
-    # _sync_live_file(key, new_version)
-
-    # return validation_result
 
     # ตรวจสอบความสอดคล้องกับ ProductMaster
     reconcile_result = reconcile_template_with_product_master(
