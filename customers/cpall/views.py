@@ -1164,6 +1164,11 @@ def template_group_detail(request, group_id):
 
     production_version, logistic_versions = get_group_template_versions(group)
 
+    registry = get_template_registry()
+
+    for version in logistic_versions:
+        version.display_label = registry[version.template_key]["label"]
+
     consistency = None
     if production_version:
         try:
