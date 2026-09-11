@@ -193,6 +193,67 @@ class TemplateVersion(models.Model):
         return f"{self.template_key} v{self.version_number}"
 
 
+class TemplateGroup(models.Model):
+    """
+    จัดกลุ่ม TemplateVersion (Production 1 ตัว + Logistic หลายตัว) ให้เป็น "ชุด" เดียวกัน (Feature 1)
+    — ตอน Activate จะสลับ is_active ของทุก TemplateVersion สมาชิกในกลุ่มพร้อมกันทีเดียว กัน Admin
+    เผลอเอา Production กับ Logistic คนละรอบมาใช้คู่กัน
+
+    is_active=True มีได้แค่ 1 group ต่อ customer — enforce ผ่าน Python (template_manager.py) เท่านั้น
+    เหมือนกับ TemplateVersion.is_active ด้านบน ไม่ใช่ DB constraint
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
+    name = models.CharField(max_length=100, verbose_name="ชื่อชุด")
+    note = models.TextField(blank=True, null=True, verbose_name="หมายเหตุ")
+    is_active = models.BooleanField(default=False, verbose_name="ใช้งานอยู่")
+    created_at = models.DateTimeField(auto_now_add=True)
+    activated_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table = "template_group"
+        managed = False
+        verbose_name = "ชุด Template"
+        verbose_name_plural = "ชุด Template"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["customer", "name"], name="template_group_customer_name_key"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class TemplateGroupItem(models.Model):
+    """
+    สมาชิกของ TemplateGroup — ตารางกลาง (M2M) ระหว่าง TemplateGroup กับ TemplateVersion เพราะ
+    TemplateVersion ตัวเดียวถูก reuse ในหลาย Group ได้ (เช่น Production v5 ยังใช้เหมือนเดิม แต่
+    เปลี่ยนแค่ Logistic บางกลุ่มในอีก Group หนึ่ง)
+    """
+    template_group = models.ForeignKey(
+        TemplateGroup, on_delete=models.CASCADE, db_column="template_group_id",
+        related_name="items",
+    )
+    template_version = models.ForeignKey(
+        TemplateVersion, on_delete=models.CASCADE, db_column="template_version_id",
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "template_group_item"
+        managed = False
+        verbose_name = "สมาชิกชุด Template"
+        verbose_name_plural = "สมาชิกชุด Template"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["template_group", "template_version"], name="template_group_item_group_version_key",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.template_group.name} — {self.template_version}"
+
+
 class PlanRun(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
     created_at = models.DateTimeField(auto_now_add=True)
