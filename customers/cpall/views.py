@@ -67,6 +67,7 @@ from customers.cpall.logic.template_manager import (
     upload_new_version,
     reconcile_template_version,
     apply_product_master_action,
+    validate_group_consistency,
     _sync_live_file,
 )
 from customers.cpall.models import PlanRun
@@ -1125,8 +1126,283 @@ def download_all_zip(request, plan_run_id):
 # ---------- จัดการ Template (ดาวน์โหลด/อัปโหลด/ดูประวัติเวอร์ชัน/กู้คืน/ลบ) ----------
 
 def template_list(request):
+    """
+    Template Group tab (default) — Feature 1, 2025-09-10 — แสดงรายการชุด Template ทั้งหมด
+    """
+    from customers.cpall.logic.template_manager import ensure_bootstrap_group
+    from customers.cpall.models import TemplateGroup
+
+    ensure_bootstrap_group()
+    groups = TemplateGroup.objects.prefetch_related("items__template_version").all()
+    return render(request, "cpall/template_list.html", {"groups": groups, "active_tab": "group"})
+
+
+def template_version_list(request):
+    """Template Versions tab — เนื้อหาเดิมทั้งหมดจากก่อนมี Feature 1 (ย้ายมาจาก template_list เดิม)"""
     templates = list_templates()
-    return render(request, "cpall/template_list.html", {"templates": templates})
+    return render(request, "cpall/_template_version_list_page.html", {"templates": templates})
+
+
+def template_group_detail(request, group_id):
+    """หน้ารายละเอียดชุด Template — แสดงสมาชิกในกลุ่ม + ผล validate_group_consistency() ล่าสุด"""
+    from customers.cpall.models import TemplateGroup
+
+    group = get_object_or_404(
+        TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id,
+    )
+
+    production_version = None
+    logistic_versions = []
+    for item in group.items.all():
+        if item.template_version.template_key == "production_plan":
+            production_version = item.template_version
+        else:
+            logistic_versions.append(item.template_version)
+
+    consistency = None
+    if production_version:
+        try:
+            consistency = validate_group_consistency(production_version, logistic_versions)
+        except Exception as e:
+            consistency = {"is_consistent": False, "error": str(e)}
+
+    return render(request, "cpall/template_group_detail.html", {
+        "group": group,
+        "production_version": production_version,
+        "logistic_versions": logistic_versions,
+        "consistency": consistency,
+    })
+
+
+def _template_group_form_context():
+    """เตรียมข้อมูล template ทั้งหมด (key + เวอร์ชันที่มีอยู่) สำหรับหน้าสร้าง/แก้ไข Group — ใช้ร่วมกัน
+    ทั้ง GET (แสดงฟอร์ม) — แยกจาก view เพื่อไม่ต้องเขียนซ้ำระหว่างหน้าสร้างกับหน้าแก้ไข"""
+    from customers.cpall.models import TemplateVersion
+
+    registry = get_template_registry()
+    templates = []
+    for key, info in registry.items():
+        versions = list(TemplateVersion.objects.filter(template_key=key).order_by("-version_number"))
+        templates.append({"key": key, "label": info["label"], "kind": info["kind"], "versions": versions})
+    return templates
+
+
+def template_group_create(request):
+    """สร้างชุด Template ใหม่ — เลือกเวอร์ชันที่มีอยู่ หรืออัปโหลดไฟล์ใหม่ได้ต่อ template (Feature 1)
+    บันทึกแค่จัดสมาชิกในกลุ่มเท่านั้น ไม่แตะ ProductMaster เลย (เช็คแยกตอน Activate — Step ถัดไป)"""
+    if request.method == "GET":
+        return render(request, "cpall/template_group_form.html", {
+            "templates": _template_group_form_context(), "group": None,
+        })
+    return _template_group_save(request, group=None)
+
+
+def template_group_edit(request, group_id):
+    """แก้ไขชุด Template ที่มีอยู่ — ใช้หน้า/logic เดียวกับสร้างใหม่ (ตามที่ตกลงกันไว้ว่าให้แยกหน้า
+    แก้ไขจากหน้าอื่นชัดเจน กัน Admin ทำงานสับสน) — ถ้าชุดนี้ active อยู่ แสดง banner เตือนในฟอร์ม"""
+    from customers.cpall.models import TemplateGroup
+
+    group = get_object_or_404(TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id)
+    if request.method == "GET":
+        current_version_ids = {item.template_version_id for item in group.items.all()}
+        return render(request, "cpall/template_group_form.html", {
+            "templates": _template_group_form_context(), "group": group,
+            "current_version_ids": current_version_ids,
+        })
+    return _template_group_save(request, group=group)
+
+
+def _template_group_save(request, group):
+    """บันทึกฟอร์มสร้าง/แก้ไข Group จริง — รองรับทั้ง 'เลือกเวอร์ชันที่มีอยู่' และ 'อัปโหลดไฟล์ใหม่'
+    ต่อ template slot (production_plan + logistic_<group> ทุกกลุ่มที่ active) — atomic ทั้งหมด (ถ้า
+    ไฟล์ไหนอัปโหลดไม่ผ่าน ไม่บันทึกอะไรเลย ไม่เหลือ Group ค้างครึ่งๆ กลางๆ)"""
+    from django.db import transaction
+
+    from customers.cpall.logic.template_manager import TemplateValidationError, upload_version_for_group
+    from customers.cpall.models import TemplateGroup, TemplateGroupItem
+
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    def error_response(message, status=400):
+        if is_htmx:
+            response = HttpResponse(status=status)
+            response["HX-Trigger"] = json.dumps({"toast": {"message": message, "level": "error"}})
+            return response
+        return render(request, "cpall/template_group_form.html", {
+            "templates": _template_group_form_context(), "group": group, "error": message,
+        })
+
+    name = request.POST.get("name", "").strip()
+    note = request.POST.get("note", "").strip()
+    if not name:
+        return error_response("กรุณากรอกชื่อชุด")
+
+    registry = get_template_registry()
+    temp_files_to_cleanup = []
+    try:
+        version_ids = []
+        for key in registry:
+            mode = request.POST.get(f"{key}_mode")
+            if mode == "existing":
+                version_id = request.POST.get(f"{key}_existing_version")
+                if version_id:
+                    version_ids.append(int(version_id))
+            elif mode == "upload":
+                uploaded_file = request.FILES.get(f"{key}_upload_file")
+                if uploaded_file:
+                    ext = os.path.splitext(uploaded_file.name)[1].lower()
+                    if ext != ".xlsx":
+                        return error_response(f"ไฟล์ของ '{registry[key]['label']}' ต้องเป็น .xlsx เท่านั้น")
+                    os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
+                    temp_path = os.path.join(TEMP_UPLOAD_DIR, f"group_{key}_{uploaded_file.name}")
+                    with open(temp_path, "wb") as f:
+                        for chunk in uploaded_file.chunks():
+                            f.write(chunk)
+                    temp_files_to_cleanup.append(temp_path)
+                    new_version = upload_version_for_group(key, temp_path, original_filename=uploaded_file.name)
+                    temp_files_to_cleanup.remove(temp_path)  # upload_version_for_group ย้ายไฟล์ไปแล้ว
+                    version_ids.append(new_version.id)
+
+        with transaction.atomic():
+            if group is None:
+                from customers.cpall.logic.db import get_cpall_customer_id
+                group = TemplateGroup.objects.create(customer_id=get_cpall_customer_id(), name=name, note=note)
+            else:
+                group.name = name
+                group.note = note
+                group.save(update_fields=["name", "note"])
+                TemplateGroupItem.objects.filter(template_group=group).delete()
+
+            for vid in version_ids:
+                TemplateGroupItem.objects.create(template_group=group, template_version_id=vid)
+
+    except TemplateValidationError as e:
+        return error_response(f"ไฟล์มีปัญหา: {e}")
+    finally:
+        for path in temp_files_to_cleanup:
+            if os.path.exists(path):
+                os.remove(path)
+
+    if is_htmx:
+        response = HttpResponse(status=200)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {"message": "บันทึกชุด Template สำเร็จ", "level": "success"},
+            "replaceLocation": {"url": reverse("cpall:template_group_detail", args=[group.id])},
+        })
+        return response
+    return redirect("cpall:template_group_detail", group_id=group.id)
+
+
+def template_group_activate(request, group_id):
+    """
+    ปุ่ม "ใช้ชุดนี้" — Activate ทั้ง Group พร้อมกัน (Feature 1, Step 5) — ตามลำดับที่ตกลงกันไว้:
+      [1] validate_group_consistency() — ไฟล์ในกลุ่ม match กันไหม (ไฟล์กับไฟล์ ไม่เกี่ยว ProductMaster)
+          ไม่ผ่าน → block ทันที ไม่ไปต่อเลย ต้องกลับไปแก้ไขสมาชิกกลุ่มก่อน (ผ่านหน้าแก้ไข)
+      [2] reconcile_template_version() ทีละ template ในกลุ่ม (ของเดิม เรียกซ้ำ ไม่ต้องเขียนใหม่)
+      [3a] ไม่มี mismatch เลยสักตัว → หน้า confirm (ใหม่ — รวมทุก template ในกลุ่ม)
+      [3b] มี mismatch อย่างน้อย 1 template → หน้า reconcile (reuse partial เดิม
+           _template_version_reconcile.html ต่อ template ที่ mismatch — ผูกกับ key/version_id ของ
+           ตัวเองอยู่แล้ว ไม่ต้องแก้) — Admin แก้ทีละอันผ่าน action เดิม แล้วกด "ตรวจสอบอีกครั้ง"
+    """
+    from customers.cpall.models import TemplateGroup
+
+    if request.method != "POST":
+        return HttpResponse(status=405)
+
+    group = get_object_or_404(TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id)
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    production_version = None
+    logistic_versions = []
+    for item in group.items.all():
+        if item.template_version.template_key == "production_plan":
+            production_version = item.template_version
+        else:
+            logistic_versions.append(item.template_version)
+
+    if production_version is None:
+        response = HttpResponse(status=400)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {"message": "ชุดนี้ยังไม่มีแพลนผลิต — ใช้งานไม่ได้", "level": "error"},
+        })
+        return response
+
+    # [1] ตรวจไฟล์กับไฟล์ก่อน — ไม่ผ่าน → popup error (ไม่ list รหัสสินค้ายาวๆ ในข้อความตรงๆ ตามที่
+    # ขอ 2025-09-11 — สรุปจำนวนสั้นๆ แล้วให้กด "ดูรายละเอียด ↗" ไปหน้า Group detail แทน ที่มีรายละเอียด
+    # ครบอยู่แล้ว (consistency คำนวณสดใหม่ทุกครั้งที่โหลดหน้า) — reuse pattern popup/detail_url เดิม
+    # จาก base.html's alert modal (เคยใช้กับ missing_template_items ตอน import PO มาก่อนแล้ว)
+    consistency = validate_group_consistency(production_version, logistic_versions)
+    if not consistency["is_consistent"]:
+        mismatch_count = (
+            len(consistency["product_missing_in_logistic"]) + len(consistency["product_extra_in_logistic"])
+            + len(consistency["sub_location_missing_in_logistic"]) + len(consistency["sub_location_extra_in_logistic"])
+        )
+        response = HttpResponse(status=400)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {
+                "message": f"ไฟล์ในชุด '{group.name}' ยังไม่ตรงกัน ({mismatch_count} รายการ) แก้ไขให้ตรงกันก่อนถึงจะใช้ชุดนี้ได้",
+                "level": "error",
+                "detail_url": reverse("cpall:template_group_detail", args=[group.id]),
+            },
+        })
+        return response
+
+    # [2] ตรวจ ProductMaster ทีละ template ในกลุ่ม (ของเดิม)
+    all_versions = [production_version] + logistic_versions
+    reconciles = [
+        reconcile_template_version(key=v.template_key, version_id=v.id)
+        for v in all_versions
+    ]
+    has_mismatch = any(r["mismatch_count"] > 0 for r in reconciles)
+
+    if has_mismatch:
+        return render(request, "cpall/template_group_reconcile.html", {
+            "group": group,
+            "items": list(zip(all_versions, reconciles)),
+        })
+
+    # [3a] ไม่มี mismatch เลย → หน้า confirm
+    return render(request, "cpall/template_group_confirm.html", {
+        "group": group, "production_version": production_version, "logistic_versions": logistic_versions,
+    })
+
+
+def template_group_activate_confirm(request, group_id):
+    """Admin กดยืนยันในหน้า confirm แล้ว — activate ทั้ง Group พร้อมกันจริง (atomic)"""
+    from django.db import transaction
+    from django.utils import timezone
+
+    from customers.cpall.models import TemplateGroup, TemplateVersion
+
+    if request.method != "POST":
+        return HttpResponse(status=405)
+
+    group = get_object_or_404(TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id)
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    with transaction.atomic():
+        for item in group.items.all():
+            version = item.template_version
+            TemplateVersion.objects.filter(
+                template_key=version.template_key, is_active=True,
+            ).exclude(id=version.id).update(is_active=False)
+            version.is_active = True
+            version.save(update_fields=["is_active"])
+            _sync_live_file(version.template_key, version)
+
+        TemplateGroup.objects.filter(is_active=True).exclude(id=group.id).update(is_active=False)
+        group.is_active = True
+        group.activated_at = timezone.now()
+        group.save(update_fields=["is_active", "activated_at"])
+
+    if is_htmx:
+        response = HttpResponse(status=200)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {"message": f"ใช้ชุด '{group.name}' แล้ว", "level": "success"},
+            "replaceLocation": {"url": reverse("cpall:template_group_detail", args=[group.id])},
+        })
+        return response
+    return redirect("cpall:template_group_detail", group_id=group.id)
 
 
 def template_download(request, key):

@@ -622,6 +622,12 @@ def upload_new_version(key: str, new_filepath: str, original_filename: str = Non
     แล้ว (กู้คืนได้เสมอผ่าน restore_to_version) ถ้า validate ไม่ผ่าน จะ raise ทันที ไม่แตะเวอร์ชัน/ไฟล์
     live เดิมเลย
     original_filename: ชื่อไฟล์ตอน Admin เลือกอัปโหลดจริง (เก็บไว้ให้ดูย้อนหลังในหน้าประวัติเวอร์ชัน)
+
+    *** ใช้กับหน้า Template Versions แบบเดิม (อัปโหลด + reconcile ProductMaster ทันที) เท่านั้น ***
+    (2025-09-10) สำหรับ Feature 1 (Template Group) ใช้ upload_version_for_group() แทน — ฟังก์ชันนั้น
+    ตรวจแค่โครงสร้างไฟล์ ไม่ reconcile กับ ProductMaster ทันที (defer ไปเช็คตอน Activate Group แทน
+    ตาม concept "import เข้า Group ยังไม่เช็คกับ ProductMaster") — เก็บฟังก์ชันนี้ไว้ไม่ลบทิ้ง เผื่อ
+    ต้องกลับไปใช้ flow อัปโหลดนอก Group แบบเดิมในอนาคต
     """
     if key not in get_template_registry():
         raise TemplateValidationError(f"ไม่รู้จัก template '{key}'")
@@ -681,6 +687,46 @@ def upload_new_version(key: str, new_filepath: str, original_filename: str = Non
         "version": new_version,
         "reconcile": reconcile_result,
     }
+
+
+def upload_version_for_group(key: str, new_filepath: str, original_filename: str = None):
+    """
+    สร้าง TemplateVersion ใหม่สำหรับใช้ใน Template Group (Feature 1, 2025-09-10) — ตรวจแค่โครงสร้าง
+    ไฟล์เอง (validate_template) เหมือนกัน แต่ *** ไม่เรียก reconcile_template_with_product_master()
+    เลย *** ต่างจาก upload_new_version() เดิมด้านบน — ตาม concept ที่ตกลงกันไว้: "ตอน import ไฟล์เข้า
+    Group ยังไม่เช็คกับ ProductMaster" เช็คแค่ตอนกด Activate Group เท่านั้น (ผ่าน
+    validate_group_consistency() ก่อน แล้วค่อย reconcile_template_with_product_master() ทีหลัง)
+
+    เวอร์ชันที่สร้างจากฟังก์ชันนี้ยังไม่ active เสมอ (เหมือนกับ upload_new_version()) ต้องถูกเพิ่มเข้า
+    Group แล้ว Activate Group ทั้งชุดถึงจะ active จริง — ไม่ sync live file ที่นี่เลย
+
+    คืนค่า TemplateVersion object ที่สร้างใหม่ตรงๆ (ไม่ใช่ dict แบบ upload_new_version() เพราะไม่มี
+    reconcile result ให้ส่งกลับ — caller เพิ่มเป็นสมาชิก Group เองด้วย TemplateGroupItem)
+    """
+    if key not in get_template_registry():
+        raise TemplateValidationError(f"ไม่รู้จัก template '{key}'")
+
+    validation_result = validate_template(key, new_filepath)
+
+    from customers.cpall.models import TemplateVersion
+
+    _ensure_initial_version(key)
+    last = TemplateVersion.objects.filter(template_key=key).order_by("-version_number").first()
+    next_version = (last.version_number + 1) if last else 1
+
+    version_path = _version_file_path(key, next_version)
+    os.makedirs(os.path.dirname(version_path), exist_ok=True)
+    shutil.move(new_filepath, version_path)
+
+    return TemplateVersion.objects.create(
+        customer_id=get_cpall_customer_id(),
+        template_key=key,
+        version_number=next_version,
+        file_path=version_path,
+        original_filename=original_filename,
+        is_active=False,
+        validation_summary=f"sku_count={validation_result.get('sku_count')}",
+    )
 
 
 def restore_to_version(key: str, version_id: int):
@@ -768,5 +814,122 @@ def delete_version(key: str, version_id: int):
 
     if os.path.exists(file_path):
         os.remove(file_path)
+
+
+def validate_group_consistency(production_version, logistic_versions: list) -> dict:
+    """
+    ตรวจสอบว่า Production Template กับ Logistic Template ทั้งหมดในชุด (Group) ตรงกันไหม — ตรวจ "ไฟล์
+    กับไฟล์" ล้วนๆ ไม่เกี่ยวกับ ProductMaster เลย (Feature 1, 2025-09-10 — เช็คกับ ProductMaster แยก
+    ต่างหากตอน Activate Group ผ่าน reconcile_template_with_product_master())
+
+    กติกาที่ตกลงกันไว้:
+      1. Product set ของ Production ต้อง = union ของ Product set จาก Logistic ทั้งหมดในชุด
+      2. sub_location ของ Production ต้อง = union ของ sub_location จาก Logistic ทั้งหมดในชุด
+      3. Logistic แต่ละไฟล์ไม่จำเป็นต้องมีครบทุก sub_location ของ Production (แทนคนละ Logistic Group)
+      4. sub_location ซ้ำกันระหว่าง Logistic Templates ต่างไฟล์กัน ยังไม่ห้าม (อาจมี business case)
+
+    production_version, logistic_versions: TemplateVersion objects (ไม่ใช่ key string) — เปิดไฟล์จาก
+    version.file_path ตรงๆ (ไม่ใช่ไฟล์ live ที่ path ตายตัว) ตรวจสอบได้แม้ version นั้นยังไม่ active
+    """
+    import openpyxl
+
+    from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
+    from customers.cpall.logic.excel_export import _find_sub_location_columns
+    from customers.cpall.logic.logistic_plan_export import _find_column_labels, _find_line_no_column
+    from customers.cpall.logic.logistic_plan_export import _find_qty_column_range
+    from customers.cpall.logic.logistic_plan_export import _find_sku_header_rows as _find_lp_sku_header_rows
+
+    registry = get_template_registry()
+
+    # ---------- Production: barcode set + sub_location set ----------
+    if production_version.template_key not in registry or registry[production_version.template_key]["kind"] != "production":
+        raise TemplateValidationError(f"'{production_version.template_key}' ไม่ใช่ Production Template")
+
+    pp_wb = openpyxl.load_workbook(production_version.file_path)
+    pp_ws = pp_wb[get_pp_sheet_name()]
+    pp_barcodes = set(_find_pp_sku_header_rows(pp_ws).keys())
+    pp_sub_locations = set(_find_sub_location_columns(pp_ws).values())
+
+    # ---------- Logistic: union ของ barcode set + sub_location set จากทุกไฟล์ในชุด ----------
+    lp_barcodes_union = set()
+    lp_sub_locations_union = set()
+
+    for lv in logistic_versions:
+        if lv.template_key not in registry or registry[lv.template_key]["kind"] != "logistic":
+            raise TemplateValidationError(f"'{lv.template_key}' ไม่ใช่ Logistic Template")
+
+        group_name = registry[lv.template_key]["group"]
+        _, sheet_name = get_group_templates()[group_name]
+
+        wb = openpyxl.load_workbook(lv.file_path)
+        ws = wb[sheet_name]
+
+        line_no_col, header_row = _find_line_no_column(ws)
+        name_col = line_no_col + 1
+        qty_start_col = line_no_col + 3
+        qty_start_col, qty_end_col = _find_qty_column_range(ws, qty_start_col, header_row)
+
+        # forward-fill sub_location ของแต่ละคอลัมน์ — pattern เดียวกับ export_logistic_plan()/
+        # validate_logistic_plan() (คอลัมน์ PO2, PO3, ... ที่ตามหลังคอลัมน์แรกของจุดส่งย่อยเดียวกัน
+        # ไม่มีชื่อซ้ำเพราะเทมเพลตใช้ merged cell ใส่ชื่อแค่ครั้งเดียว)
+        last_sub_location = None
+        for col in range(qty_start_col, qty_end_col + 1):
+            sub_loc, _ = _find_column_labels(ws, col, header_row)
+            if sub_loc is None:
+                sub_loc = last_sub_location if last_sub_location is not None else group_name
+            last_sub_location = sub_loc
+            lp_sub_locations_union.add(sub_loc)
+
+        header_rows = _find_lp_sku_header_rows(ws, name_col)
+        lp_barcodes_union |= set(header_rows.keys())
+
+    # ---------- เปรียบเทียบ ----------
+    product_missing_in_logistic = sorted(pp_barcodes - lp_barcodes_union)
+    product_extra_in_logistic = sorted(lp_barcodes_union - pp_barcodes)
+    sub_location_missing_in_logistic = sorted(pp_sub_locations - lp_sub_locations_union)
+    sub_location_extra_in_logistic = sorted(lp_sub_locations_union - pp_sub_locations)
+
+    is_consistent = not (
+        product_missing_in_logistic or product_extra_in_logistic
+        or sub_location_missing_in_logistic or sub_location_extra_in_logistic
+    )
+
+    return {
+        "is_consistent": is_consistent,
+        "product_missing_in_logistic": product_missing_in_logistic,
+        "product_extra_in_logistic": product_extra_in_logistic,
+        "sub_location_missing_in_logistic": sub_location_missing_in_logistic,
+        "sub_location_extra_in_logistic": sub_location_extra_in_logistic,
+    }
+
+
+def ensure_bootstrap_group():
+    """
+    Bootstrap "ชุดปัจจุบัน" (Feature 1, Step 7, 2025-09-11) — ถ้ายังไม่มี TemplateGroup เลยในระบบ
+    (ระบบเพิ่งอัปเกรดมาใช้ Template Group ครั้งแรก) สร้าง Group แรกอัตโนมัติจากเวอร์ชันที่ active
+    อยู่ตอนนี้ทั้งหมด — ไม่ต้องให้ Admin ทำอะไรเพิ่ม ป้องกันข้อมูลสับสน (ถ้าไม่ทำ Admin จะอัปโหลด/
+    เปลี่ยนเวอร์ชันอะไรไม่ได้เลยจนกว่าจะสร้าง Group เอง เพราะการอัปโหลด/activate ทั้งหมดย้ายมาอยู่ใต้
+    Template Group แล้ว — Step 6) เรียกแบบ idempotent เหมือนกับ _ensure_initial_version() ด้านบน —
+    เรียกซ้ำกี่ครั้งก็ปลอดภัย เพราะเช็ค TemplateGroup.objects.exists() ก่อนเสมอ
+    """
+    from customers.cpall.models import TemplateGroup, TemplateGroupItem, TemplateVersion
+
+    if TemplateGroup.objects.exists():
+        return
+
+    active_versions = list(TemplateVersion.objects.filter(is_active=True))
+    if not active_versions:
+        return  # fresh install ที่ยังไม่เคยอัปโหลด template อะไรเลย ไม่มีอะไรให้ bootstrap
+
+    from django.utils import timezone
+
+    group = TemplateGroup.objects.create(
+        customer_id=get_cpall_customer_id(), name="ชุดปัจจุบัน",
+        note="สร้างอัตโนมัติตอนอัปเกรดมาใช้ Template Group ครั้งแรก จากเวอร์ชันที่ใช้งานอยู่ก่อนหน้านี้",
+        is_active=True, activated_at=timezone.now(),
+    )
+    for v in active_versions:
+        TemplateGroupItem.objects.create(template_group=group, template_version=v)
+
 
 

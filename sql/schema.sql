@@ -270,6 +270,41 @@ ALTER TABLE template_version ADD COLUMN IF NOT EXISTS original_filename TEXT;
 ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS production_template_version_id INTEGER
     REFERENCES template_version(id);
 
+-- ---------- Template Group (Feature 1 — 2025-09-10) ----------
+-- จัดกลุ่ม TemplateVersion (Production 1 ตัว + Logistic หลายตัว) ให้เป็น "ชุด" เดียวกัน กัน Admin
+-- เผลอเอา Production กับ Logistic คนละรอบมาใช้คู่กัน — ตอน Activate Group จะสลับ is_active ของทุก
+-- TemplateVersion สมาชิกในกลุ่มพร้อมกันทีเดียว (atomic) แทนที่จะ activate ทีละไฟล์แบบเดิม
+--
+-- TemplateVersion ตัวเดียวถูก reuse ในหลาย Group ได้ (เช่น Production v5 ยังใช้เหมือนเดิม แต่เปลี่ยน
+-- แค่ Logistic บางกลุ่ม) เพราะงั้นใช้ M2M ผ่านตารางกลาง (template_group_item) ไม่ผูกตรงๆ
+--
+-- กติกาที่ enforce ผ่าน Python เท่านั้น (ไม่ใช่ DB constraint — ตาม pattern เดียวกับ
+-- TemplateVersion.is_active ด้านบนที่บังคับผ่าน template_manager.py):
+--   - is_active=True มีได้แค่ 1 group ต่อ customer
+--   - 1 group มี Production Template ได้ไม่เกิน 1 ตัว (เช็คจาก template_version.template_key ตอน
+--     บันทึก ไม่ใช่ DB constraint เพราะต้อง join ข้ามตาราง)
+CREATE TABLE IF NOT EXISTS template_group (
+    id              SERIAL PRIMARY KEY,
+    customer_id     INTEGER NOT NULL REFERENCES customer(id),
+    name            VARCHAR(100) NOT NULL,
+    note            TEXT,
+    is_active       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMP DEFAULT now(),
+    activated_at    TIMESTAMP,              -- อัปเดตทุกครั้งที่กด "ใช้ชุดนี้" สำเร็จ — ไว้โชว์ในหน้า list
+    UNIQUE (customer_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_template_group_customer ON template_group(customer_id);
+
+CREATE TABLE IF NOT EXISTS template_group_item (
+    id                      SERIAL PRIMARY KEY,
+    template_group_id       INTEGER NOT NULL REFERENCES template_group(id) ON DELETE CASCADE,
+    template_version_id     INTEGER NOT NULL REFERENCES template_version(id),
+    created_at              TIMESTAMP DEFAULT now(),
+    UNIQUE (template_group_id, template_version_id)
+);
+CREATE INDEX IF NOT EXISTS idx_template_group_item_group ON template_group_item(template_group_id);
+CREATE INDEX IF NOT EXISTS idx_template_group_item_version ON template_group_item(template_version_id);
+
 -- ฐานข้อมูลที่เคยรัน schema.sql เวอร์ชันก่อนหน้ามาแล้ว (มี po_import/po_line อยู่แล้วแบบไม่มีคอลัมน์
 -- เก็บข้อมูลครบทุกคอลัมน์ของไฟล์ต้นฉบับ) เพิ่มคอลัมน์ให้ — ค่าเก่าที่มีอยู่แล้วจะเป็น NULL (แผน/PO เก่า
 -- ก่อนมีระบบนี้ยังใช้งานได้ปกติ แค่ regenerate ไฟล์แบบครบทุกคอลัมน์ไม่ได้ ต้อง fallback อย่างอื่นแทน)
