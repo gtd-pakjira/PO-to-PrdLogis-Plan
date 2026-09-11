@@ -1321,16 +1321,31 @@ def template_group_activate(request, group_id):
             logistic_versions.append(item.template_version)
 
     if production_version is None:
-        return HttpResponse("ชุดนี้ยังไม่มีแพลนผลิต — ใช้งานไม่ได้", status=400)
+        response = HttpResponse(status=400)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {"message": "ชุดนี้ยังไม่มีแพลนผลิต — ใช้งานไม่ได้", "level": "error"},
+        })
+        return response
 
-    # [1] ตรวจไฟล์กับไฟล์ก่อน
+    # [1] ตรวจไฟล์กับไฟล์ก่อน — ไม่ผ่าน → popup error (ไม่ list รหัสสินค้ายาวๆ ในข้อความตรงๆ ตามที่
+    # ขอ 2025-09-11 — สรุปจำนวนสั้นๆ แล้วให้กด "ดูรายละเอียด ↗" ไปหน้า Group detail แทน ที่มีรายละเอียด
+    # ครบอยู่แล้ว (consistency คำนวณสดใหม่ทุกครั้งที่โหลดหน้า) — reuse pattern popup/detail_url เดิม
+    # จาก base.html's alert modal (เคยใช้กับ missing_template_items ตอน import PO มาก่อนแล้ว)
     consistency = validate_group_consistency(production_version, logistic_versions)
     if not consistency["is_consistent"]:
-        return render(request, "cpall/template_group_detail.html", {
-            "group": group, "production_version": production_version,
-            "logistic_versions": logistic_versions, "consistency": consistency,
-            "block_message": "ไฟล์ในชุดนี้ยังไม่ตรงกัน แก้ไขให้ตรงกันก่อนถึงจะใช้ชุดนี้ได้",
-        }, status=400)
+        mismatch_count = (
+            len(consistency["product_missing_in_logistic"]) + len(consistency["product_extra_in_logistic"])
+            + len(consistency["sub_location_missing_in_logistic"]) + len(consistency["sub_location_extra_in_logistic"])
+        )
+        response = HttpResponse(status=400)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {
+                "message": f"ไฟล์ในชุด '{group.name}' ยังไม่ตรงกัน ({mismatch_count} รายการ) แก้ไขให้ตรงกันก่อนถึงจะใช้ชุดนี้ได้",
+                "level": "error",
+                "detail_url": reverse("cpall:template_group_detail", args=[group.id]),
+            },
+        })
+        return response
 
     # [2] ตรวจ ProductMaster ทีละ template ในกลุ่ม (ของเดิม)
     all_versions = [production_version] + logistic_versions

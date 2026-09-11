@@ -69,12 +69,6 @@
     {% endif %}
 </div>
 
-{% if block_message %}
-<div class="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-    <p class="text-sm text-red-700">{{ block_message }}</p>
-</div>
-{% endif %}
-
 <div class="grid gap-2 w-full max-w-2xl">
     {% if production_version %}
     <div class="bg-white rounded-lg border border-stone-200 px-4 py-3">
