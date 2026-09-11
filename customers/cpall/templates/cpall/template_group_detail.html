@@ -77,14 +77,68 @@
 <div class="grid gap-2 w-full max-w-2xl">
     {% if production_version %}
     <div class="bg-white rounded-lg border border-stone-200 px-4 py-3">
-        <p class="text-xs text-stone-400 mb-0.5">แพลนผลิต</p>
-        <p class="text-sm text-stone-900">{{ production_version }}</p>
+        <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+                <p class="text-xs text-stone-400 mb-1">แพลนผลิต</p>
+                <p class="text-sm font-medium text-stone-900 truncate">
+                    📄 {{ production_version.original_filename|default:"ไม่ทราบชื่อไฟล์" }}
+                </p>
+                <p class="text-xs text-stone-500 mt-1">
+                    Version {{ production_version.version_number }}
+                    {% if production_version.is_active %}
+                    <span class="text-emerald-700">· ใช้งานอยู่</span>
+                    {% endif %}
+                </p>
+            </div>
+
+            <div class="flex items-center gap-3 shrink-0">
+                <a
+                    href="{% url 'cpall:template_version_view' group.id production_version.template_key production_version.id %}"
+                    class="text-xs font-medium text-stone-600 hover:text-stone-900 hover:underline"
+                >
+                    ดู Template
+                </a>
+                <a
+                    href="{% url 'cpall:template_version_download' production_version.template_key production_version.id %}"
+                    class="text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:underline"
+                >
+                    ดาวน์โหลด
+                </a>
+            </div>
+        </div>
     </div>
     {% endif %}
     {% for lv in logistic_versions %}
     <div class="bg-white rounded-lg border border-stone-200 px-4 py-3">
-        <p class="text-xs text-stone-400 mb-0.5">แพลนกระจาย</p>
-        <p class="text-sm text-stone-900">{{ lv }}</p>
+        <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+                <p class="text-xs text-stone-400 mb-1">แพลนกระจาย</p>
+                <p class="text-sm font-medium text-stone-900 truncate">
+                    📄 {{ lv.original_filename|default:"ไม่ทราบชื่อไฟล์" }}
+                </p>
+                <p class="text-xs text-stone-500 mt-1">
+                    Version {{ lv.version_number }}
+                    {% if lv.is_active %}
+                    <span class="text-emerald-700">· ใช้งานอยู่</span>
+                    {% endif %}
+                </p>
+            </div>
+
+            <div class="flex items-center gap-3 shrink-0">
+                <a
+                    href="{% url 'cpall:template_version_view' group.id lv.template_key lv.id %}"
+                    class="text-xs font-medium text-stone-600 hover:text-stone-900 hover:underline"
+                >
+                    ดู Template
+                </a>
+                <a
+                    href="{% url 'cpall:template_version_download' lv.template_key lv.id %}"
+                    class="text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:underline"
+                >
+                    ดาวน์โหลด
+                </a>
+            </div>
+        </div>
     </div>
     {% endfor %}
 </div>

@@ -37,6 +37,12 @@
                 {% endif %}
             </div>
             <div class="flex items-center gap-3 text-sm">
+                <a
+                    href="{% url 'cpall:template_version_history_view' key v.id %}"
+                    class="text-stone-600 hover:text-stone-900 font-medium"
+                >
+                    ดูสูตร
+                </a>
                 <!-- ปุ่ม "ใช้เวอร์ชันนี้" ตัดออกจาก tab นี้แล้ว (Step 6, Feature 1 — 2025-09-11) — การ
                      เปลี่ยนเวอร์ชันที่ใช้งานจริงต้องทำผ่านแท็บ Template Group เท่านั้น (activate ทั้ง
                      ชุดพร้อมกันเสมอ กัน Production/Logistic คนละรอบมาใช้คู่กัน) — view/URL เดิม

@@ -52,7 +52,7 @@
                     class="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm mb-3 disabled:bg-stone-50 disabled:text-stone-400">
                 {% for v in t.versions %}
                 <option value="{{ v.id }}" {% if v.id in current_version_ids %}selected{% elif not group and v.is_active %}selected{% endif %}>
-                    เวอร์ชัน {{ v.version_number }}{% if v.is_active %} (active ตอนนี้){% endif %}
+                    {{ v.original_filename|default:"ไม่ทราบชื่อไฟล์" }} — v{{ v.version_number }}{% if v.is_active %} (ใช้งานอยู่){% endif %}
                 </option>
                 {% endfor %}
             </select>

@@ -1809,78 +1809,78 @@ def template_version_restore(request, key, version_id):
 
         return redirect("cpall:template_versions", key=key)
 
-def template_version_activate(request, key, version_id):
-    if request.method != "POST":
-        return HttpResponse(status=405)
+# def template_version_activate(request, key, version_id):
+#     if request.method != "POST":
+#         return HttpResponse(status=405)
 
-    if key not in get_template_registry():
-        raise Http404
+#     if key not in get_template_registry():
+#         raise Http404
 
-    is_htmx = request.headers.get("HX-Request") == "true"
+#     is_htmx = request.headers.get("HX-Request") == "true"
 
-    try:
-        from customers.cpall.models import TemplateVersion
+#     try:
+#         from customers.cpall.models import TemplateVersion
 
-        version = TemplateVersion.objects.get(
-            id=version_id,
-            template_key=key,
-        )
+#         version = TemplateVersion.objects.get(
+#             id=version_id,
+#             template_key=key,
+#         )
 
-        # ตรวจ ProductMaster ซ้ำอีกครั้งก่อนเปลี่ยนจริง
-        reconcile = reconcile_template_version(
-            key=key,
-            version_id=version_id,
-        )
+#         # ตรวจ ProductMaster ซ้ำอีกครั้งก่อนเปลี่ยนจริง
+#         reconcile = reconcile_template_version(
+#             key=key,
+#             version_id=version_id,
+#         )
 
-        if reconcile["mismatch_count"] > 0:
-            return HttpResponse(
-                "ProductMaster ยังไม่ตรงกับ Template",
-                status=400,
-            )
+#         if reconcile["mismatch_count"] > 0:
+#             return HttpResponse(
+#                 "ProductMaster ยังไม่ตรงกับ Template",
+#                 status=400,
+#             )
 
-        TemplateVersion.objects.filter(
-            template_key=key,
-            is_active=True,
-        ).update(is_active=False)
+#         TemplateVersion.objects.filter(
+#             template_key=key,
+#             is_active=True,
+#         ).update(is_active=False)
 
-        version.is_active = True
-        version.save(update_fields=["is_active"])
+#         version.is_active = True
+#         version.save(update_fields=["is_active"])
 
-        _sync_live_file(key, version)
+#         _sync_live_file(key, version)
 
-        if is_htmx:
-            versions = list_versions(key)
+#         if is_htmx:
+#             versions = list_versions(key)
 
-            response = render(
-                request,
-                "cpall/_template_version_list.html",
-                {
-                    "key": key,
-                    "versions": versions,
-                },
-            )
+#             response = render(
+#                 request,
+#                 "cpall/_template_version_list.html",
+#                 {
+#                     "key": key,
+#                     "versions": versions,
+#                 },
+#             )
 
-            response["HX-Trigger"] = json.dumps({
-                "toast": {
-                    "message": (
-                        f"เปลี่ยนเป็นเวอร์ชัน "
-                        f"{version.version_number} แล้ว"
-                    ),
-                    "level": "success",
-                }
-            })
+#             response["HX-Trigger"] = json.dumps({
+#                 "toast": {
+#                     "message": (
+#                         f"เปลี่ยนเป็นเวอร์ชัน "
+#                         f"{version.version_number} แล้ว"
+#                     ),
+#                     "level": "success",
+#                 }
+#             })
 
-            return response
+#             return response
 
-        return redirect("cpall:template_versions", key=key)
+#         return redirect("cpall:template_versions", key=key)
 
-    except TemplateVersion.DoesNotExist:
-        raise Http404
-    except TemplateValidationError as e:
-        if is_htmx:
-            return HttpResponse(str(e), status=400)
+#     except TemplateVersion.DoesNotExist:
+#         raise Http404
+#     except TemplateValidationError as e:
+#         if is_htmx:
+#             return HttpResponse(str(e), status=400)
 
-        return redirect("cpall:template_versions", key=key)
+#         return redirect("cpall:template_versions", key=key)
 
 def template_version_delete(request, key, version_id):
     if request.method != "POST":
@@ -2186,7 +2186,93 @@ def template_view(request, key):
         grid = get_template_grid(key, sheet_name=sheet_name)
     except TemplateValidationError as e:
         raise Http404(str(e))
-    return render(request, "cpall/template_view.html", {"key": key, "grid": grid})
+    return render(
+        request,
+        "cpall/template_view.html",
+        {
+            "key": key,
+            "grid": grid,
+            "back_url": reverse("cpall:template_version_list"),
+            "back_label": "กลับ Template Versions",
+        },
+    )
+
+def template_version_view(request, group_id, key, version_id):
+    from customers.cpall.models import TemplateGroup, TemplateVersion
+
+    if key not in get_template_registry():
+        raise Http404
+
+    group = get_object_or_404(
+        TemplateGroup,
+        id=group_id,
+    )
+
+    version = get_object_or_404(
+        TemplateVersion,
+        id=version_id,
+        template_key=key,
+    )
+
+    if not group.items.filter(template_version=version).exists():
+        raise Http404
+
+    sheet_name = request.GET.get("sheet")
+
+    try:
+        grid = get_template_grid(
+            key,
+            sheet_name=sheet_name,
+            filepath=version.file_path,
+            label=version.original_filename or f"{key} v{version.version_number}",
+        )
+    except TemplateValidationError as e:
+        raise Http404(str(e))
+
+    return render(
+        request,
+        "cpall/template_view.html",
+        {
+            "key": key,
+            "grid": grid,
+            "version": version,
+            "version_view": True,
+            "group": group,
+            "back_url": reverse(
+                "cpall:template_group_detail",
+                args=[group.id],
+            ),
+            "back_label": "กลับ Group Detail",
+        },
+    )
+
+
+def template_version_download(request, key, version_id):
+    from customers.cpall.models import TemplateVersion
+
+    if key not in get_template_registry():
+        raise Http404
+
+    version = get_object_or_404(
+        TemplateVersion,
+        id=version_id,
+        template_key=key,
+    )
+
+    if not version.file_path or not os.path.exists(version.file_path):
+        raise Http404
+
+    filename = (
+        version.original_filename
+        or f"{key}_v{version.version_number}.xlsx"
+    )
+
+    response = FileResponse(
+        open(version.file_path, "rb"),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    _set_download_filename(response, filename)
+    return response
 
 def template_group_consistency_detail(request, group_id):
     from customers.cpall.models import TemplateGroup
@@ -2212,5 +2298,42 @@ def template_group_consistency_detail(request, group_id):
         {
             "group": group,
             "consistency": consistency,
+        },
+    )
+
+def template_version_history_view(request, key, version_id):
+    from customers.cpall.models import TemplateVersion
+
+    if key not in get_template_registry():
+        raise Http404
+
+    version = get_object_or_404(
+        TemplateVersion,
+        id=version_id,
+        template_key=key,
+    )
+
+    sheet_name = request.GET.get("sheet")
+
+    try:
+        grid = get_template_grid(
+            key,
+            sheet_name=sheet_name,
+            filepath=version.file_path,
+            label=version.original_filename or f"{key} v{version.version_number}",
+        )
+    except TemplateValidationError as e:
+        raise Http404(str(e))
+
+    return render(
+        request,
+        "cpall/template_view.html",
+        {
+            "key": key,
+            "grid": grid,
+            "version": version,
+            "version_view": True,
+            "back_url": reverse("cpall:template_versions", args=[key]),
+            "back_label": "กลับ Template Versions",
         },
     )

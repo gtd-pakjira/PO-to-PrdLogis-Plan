@@ -67,7 +67,14 @@ def get_template_registry() -> dict:
     return registry
 
 
-def get_template_grid(key: str, sheet_name: str = None, max_rows: int = 120, max_cols: int = 25) -> dict:
+def get_template_grid(
+    key: str,
+    sheet_name: str = None,
+    max_rows: int = 120,
+    max_cols: int = 25,
+    filepath: str = None,
+    label: str = None,
+) -> dict:
     """
     อ่านไฟล์ Template แบบดิบๆ (ไม่คำนวณ ไม่แปลงอะไรเลย) มาจัดเป็นตารางสำหรับแสดงในเว็บ — เห็นสูตร
     Excel ตรงๆ (เช่น "=SUM(G11:Q11)") แทนที่จะเห็นแค่ค่าที่คำนวณแล้ว — อ่านจากไฟล์ live เสมอ (เวอร์ชัน
@@ -81,7 +88,7 @@ def get_template_grid(key: str, sheet_name: str = None, max_rows: int = 120, max
         raise TemplateValidationError(f"ไม่รู้จัก template '{key}'")
 
     info = registry[key]
-    path = info["path"]
+    path = filepath or info["path"]
     if not os.path.exists(path):
         raise TemplateValidationError(f"ไม่พบไฟล์ {path}")
 
@@ -110,7 +117,7 @@ def get_template_grid(key: str, sheet_name: str = None, max_rows: int = 120, max
         grid_rows.append({"row_num": r, "cells": cells})
 
     return {
-        "label": info["label"],
+        "label": label or info["label"],
         "sheet_names": wb.sheetnames,
         "current_sheet": sheet_name,
         "col_letters": col_letters,
