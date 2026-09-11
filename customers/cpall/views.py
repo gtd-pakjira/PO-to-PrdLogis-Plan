@@ -1599,42 +1599,42 @@ def template_group_activate(request, group_id):
     )
 
 
-def template_group_activate_confirm(request, group_id):
-    """Admin กดยืนยันในหน้า confirm แล้ว — activate ทั้ง Group พร้อมกันจริง (atomic)"""
-    from django.db import transaction
-    from django.utils import timezone
+# def template_group_activate_confirm(request, group_id):
+#     """Admin กดยืนยันในหน้า confirm แล้ว — activate ทั้ง Group พร้อมกันจริง (atomic)"""
+#     from django.db import transaction
+#     from django.utils import timezone
 
-    from customers.cpall.models import TemplateGroup, TemplateVersion
+#     from customers.cpall.models import TemplateGroup, TemplateVersion
 
-    if request.method != "POST":
-        return HttpResponse(status=405)
+#     if request.method != "POST":
+#         return HttpResponse(status=405)
 
-    group = get_object_or_404(TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id)
-    is_htmx = request.headers.get("HX-Request") == "true"
+#     group = get_object_or_404(TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id)
+#     is_htmx = request.headers.get("HX-Request") == "true"
 
-    with transaction.atomic():
-        for item in group.items.all():
-            version = item.template_version
-            TemplateVersion.objects.filter(
-                template_key=version.template_key, is_active=True,
-            ).exclude(id=version.id).update(is_active=False)
-            version.is_active = True
-            version.save(update_fields=["is_active"])
-            _sync_live_file(version.template_key, version)
+#     with transaction.atomic():
+#         for item in group.items.all():
+#             version = item.template_version
+#             TemplateVersion.objects.filter(
+#                 template_key=version.template_key, is_active=True,
+#             ).exclude(id=version.id).update(is_active=False)
+#             version.is_active = True
+#             version.save(update_fields=["is_active"])
+#             _sync_live_file(version.template_key, version)
 
-        TemplateGroup.objects.filter(is_active=True).exclude(id=group.id).update(is_active=False)
-        group.is_active = True
-        group.activated_at = timezone.now()
-        group.save(update_fields=["is_active", "activated_at"])
+#         TemplateGroup.objects.filter(is_active=True).exclude(id=group.id).update(is_active=False)
+#         group.is_active = True
+#         group.activated_at = timezone.now()
+#         group.save(update_fields=["is_active", "activated_at"])
 
-    if is_htmx:
-        response = HttpResponse(status=200)
-        response["HX-Trigger"] = json.dumps({
-            "toast": {"message": f"ใช้ชุด '{group.name}' แล้ว", "level": "success"},
-            "replaceLocation": {"url": reverse("cpall:template_group_detail", args=[group.id])},
-        })
-        return response
-    return redirect("cpall:template_group_detail", group_id=group.id)
+#     if is_htmx:
+#         response = HttpResponse(status=200)
+#         response["HX-Trigger"] = json.dumps({
+#             "toast": {"message": f"ใช้ชุด '{group.name}' แล้ว", "level": "success"},
+#             "replaceLocation": {"url": reverse("cpall:template_group_detail", args=[group.id])},
+#         })
+#         return response
+#     return redirect("cpall:template_group_detail", group_id=group.id)
 
 
 def template_download(request, key):
