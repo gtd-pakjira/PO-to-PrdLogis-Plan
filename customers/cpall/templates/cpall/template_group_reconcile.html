@@ -4,31 +4,231 @@
 {% block content %}
 
 <div class="mb-6">
-    <a href="{% url 'cpall:template_group_detail' group.id %}" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
-    <h1 class="text-xl font-semibold text-stone-900 mt-1">ตรวจสอบ ProductMaster — {{ group.name }}</h1>
-    <p class="text-sm text-stone-500 mt-1">
-        ไฟล์ในชุดนี้ตรงกันแล้ว แต่ยังมีบางรายการที่ไม่ตรงกับ ProductMaster — จัดการให้ครบทุกรายการก่อน
-        ถึงจะใช้ชุดนี้ได้
-    </p>
+    <a href="{% url 'cpall:template_group_detail' group.id %}"
+       class="text-sm text-stone-500 hover:text-stone-700">
+        &larr; กลับ
+    </a>
+
+<h1 class="text-xl font-semibold text-stone-900 mt-1">
+    ตรวจสอบ ProductMaster — {{ group.name }}
+</h1>
+
+<p class="text-sm text-stone-500 mt-1">
+    ไฟล์ในชุดนี้ตรงกันแล้ว แต่ยังมีบางรายการที่ไม่ตรงกับ ProductMaster
+    — ตรวจสอบและเตรียมข้อมูลให้ครบก่อนยืนยันใช้ชุดนี้
+</p>
+
+
 </div>
 
-<div class="space-y-5 max-w-2xl">
-    {% for version, reconcile in items %}
-    <div class="bg-white rounded-lg border border-stone-200 px-4 py-4" id="reconcile-{{ version.id }}">
-        <p class="text-sm font-medium text-stone-900 mb-1">{{ version }}</p>
-        {% include "cpall/_template_version_reconcile.html" with key=version.template_key version_id=version.id result=reconcile %}
+{% if conflicts %}
+
+<div class="bg-red-50 border border-red-200 rounded-lg p-4 max-w-3xl mb-5">
+
+
+<h2 class="text-sm font-semibold text-red-800">
+    พบ Action ที่ขัดแย้งกัน
+</h2>
+
+<p class="text-xs text-red-700 mt-1">
+    ไม่สามารถใช้ชุดนี้ได้จนกว่าจะแก้ไขความขัดแย้ง
+</p>
+
+{% for conflict_group in conflicts %}
+    {% for item in conflict_group %}
+    <div class="mt-3 text-xs text-red-800">
+        {{ item.barcode }} — {{ item.item_name }}
+        ({{ item.action }})
     </div>
     {% endfor %}
+{% endfor %}
+
+
+</div>
+{% endif %}
+
+<form
+    method="post"
+    action="{% url 'cpall:template_group_reconcile_submit' group.id %}"
+    class="space-y-4 max-w-3xl"
+>
+    {% csrf_token %}
+
+
+<div class="bg-white rounded-lg border border-stone-200 p-4">
+
+    <h2 class="text-sm font-semibold text-stone-900">
+        รายการที่ต้องปรับ ProductMaster
+        ({{ actions|length }})
+    </h2>
+
+    <p class="text-xs text-stone-500 mt-1">
+        รายการด้านล่างเป็นการเปลี่ยนแปลงที่จะเกิดขึ้นเมื่อยืนยันใช้ชุดนี้
+    </p>
+
 </div>
 
-<div class="mt-5">
-    <button type="button"
-            hx-post="{% url 'cpall:template_group_activate' group.id %}"
-            hx-target="body" hx-swap="outerHTML"
-            hx-disabled-elt="this"
-            class="rounded-md bg-stone-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-stone-900 transition disabled:opacity-70">
-        ตรวจสอบอีกครั้ง
-    </button>
+
+{% for item in actions %}
+
+<div class="bg-white rounded-lg border border-stone-200 p-4">
+
+    <div class="flex items-start justify-between gap-4">
+
+        <div>
+            <p class="text-sm font-medium text-stone-900">
+                {{ item.item_name }}
+            </p>
+
+            <p class="text-xs text-stone-500 mt-1">
+                Barcode: {{ item.barcode }}
+            </p>
+        </div>
+
+        <span class="text-xs font-medium px-2 py-1 rounded bg-stone-100 text-stone-700">
+            {{ item.action }}
+        </span>
+
+    </div>
+
+
+    <details class="mt-3">
+
+        <summary class="cursor-pointer text-xs text-stone-500 hover:text-stone-700 select-none">
+            พบจาก {{ item.sources|length }} Template
+        </summary>
+
+        <ul class="mt-2 text-xs text-stone-700 space-y-1 pl-4">
+
+            {% for source in item.sources %}
+            <li>
+                • {{ source }}
+            </li>
+            {% endfor %}
+
+        </ul>
+
+    </details>
+
+
+    {% if item.action == "CREATE_PRODUCT" %}
+
+    <div class="mt-4 border-t border-stone-100 pt-4">
+
+        <p class="text-xs font-medium text-stone-700 mb-3">
+            ข้อมูลสินค้าใหม่
+        </p>
+
+
+        <div class="grid gap-3">
+
+            <div>
+                <label class="block text-xs text-stone-500 mb-1">
+                    ชื่อสินค้า TH *
+                </label>
+
+                <input
+                    type="text"
+                    name="name_th_{{ item.barcode }}"
+                    value="{{ item.item_name }}"
+                    required
+                    class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+                >
+            </div>
+
+
+            <div>
+                <label class="block text-xs text-stone-500 mb-1">
+                    ชื่อสินค้า EN
+                </label>
+
+                <input
+                    type="text"
+                    name="name_en_{{ item.barcode }}"
+                    class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+                >
+            </div>
+
+
+            <div class="grid grid-cols-2 gap-3">
+
+                <div>
+                    <label class="block text-xs text-stone-500 mb-1">
+                        Pack Size
+                    </label>
+
+                    <input
+                        type="text"
+                        name="pack_size_{{ item.barcode }}"
+                        class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+                    >
+                </div>
+
+
+                <div>
+                    <label class="block text-xs text-stone-500 mb-1">
+                        Unit Price
+                    </label>
+
+                    <input
+                        type="number"
+                        step="0.01"
+                        name="unit_price_{{ item.barcode }}"
+                        class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+                    >
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    {% endif %}
+
+
+    <input
+        type="hidden"
+        name="action"
+        value="{{ item.action }}"
+    >
+
+    <input
+        type="hidden"
+        name="barcode"
+        value="{{ item.barcode }}"
+    >
+
 </div>
+
+{% empty %}
+
+<div class="bg-white rounded-lg border border-stone-200 p-4">
+
+    <p class="text-sm text-stone-600">
+        ไม่พบรายการที่ต้องปรับ ProductMaster
+    </p>
+
+</div>
+
+{% endfor %}
+
+
+{% if actions %}
+
+<div class="pt-2">
+
+    <button
+        type="submit"
+        class="rounded-md bg-stone-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-stone-900 transition"
+    >
+        ตรวจสอบและไปต่อ
+    </button>
+
+</div>
+
+{% endif %}
+
+</form>
 
 {% endblock %}

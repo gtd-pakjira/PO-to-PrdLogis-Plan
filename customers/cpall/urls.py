@@ -52,4 +52,5 @@ urlpatterns = [
     path("plan/<int:plan_run_id>/delete/", views.delete_plan_run_view, name="delete_plan_run"),
     path("missing-template-items/", views.missing_template_items, name="missing_template_items",),
     path("template-groups/<int:group_id>/consistency/", views.template_group_consistency_detail, name="template_group_consistency_detail",),
+     path("templates/groups/<int:group_id>/reconcile/submit/", views.template_group_reconcile_submit, name="template_group_reconcile_submit",),
 ]

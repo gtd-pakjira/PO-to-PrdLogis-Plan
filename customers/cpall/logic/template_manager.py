@@ -418,6 +418,77 @@ def reconcile_template_version(key: str, version_id: int) -> dict:
 
     return result
 
+def build_group_reconcile_actions(all_versions, reconciles):
+    """
+    รวม ProductMaster actions ของทุก Template ใน Group
+    ให้ SKU + action เดียวกันเหลือเพียง 1 action
+
+    ตัวอย่าง:
+        Production -> DEACTIVATE SKU-A
+        Logistic A -> DEACTIVATE SKU-A
+        Logistic B -> DEACTIVATE SKU-A
+
+    จะเหลือ:
+        DEACTIVATE SKU-A
+        sources = [Production, Logistic A, Logistic B]
+
+    ยังไม่แก้ ProductMaster
+    """
+    actions = {}
+    conflicts = {}
+
+    for version, reconcile in zip(all_versions, reconciles):
+        source = reconcile["template_label"]
+
+        action_items = [
+            *reconcile["missing_in_product_master"],
+            *reconcile["inactive_in_product_master"],
+            *reconcile["active_missing_in_template"],
+        ]
+
+        for item in action_items:
+            action = item["action"]
+            barcode = str(item["barcode"]).strip()
+
+            key = (action, barcode)
+
+            if key not in actions:
+                actions[key] = {
+                    "action": action,
+                    "barcode": barcode,
+                    "item_name": (
+                        item.get("item_name")
+                        or item.get("template_item_name")
+                        or ""
+                    ),
+                    "sources": [source],
+                }
+                continue
+
+            # action + barcode ซ้ำกัน → รวม source
+            if source not in actions[key]["sources"]:
+                actions[key]["sources"].append(source)
+
+    # ตรวจ conflict:
+    # SKU เดียวกัน แต่มีคนละ action เช่น
+    # ACTIVATE + SKU-A
+    # DEACTIVATE + SKU-A
+    by_barcode = {}
+
+    for action_data in actions.values():
+        barcode = action_data["barcode"]
+        by_barcode.setdefault(barcode, []).append(action_data)
+
+    for barcode, barcode_actions in by_barcode.items():
+        action_names = {item["action"] for item in barcode_actions}
+
+        if len(action_names) > 1:
+            conflicts[barcode] = barcode_actions
+
+    return {
+        "actions": list(actions.values()),
+        "conflicts": list(conflicts.values()),
+    }
 
 
 def apply_product_master_action(
@@ -516,6 +587,103 @@ def apply_product_master_action(
         raise TemplateValidationError(
             f"ไม่รู้จัก action '{action}'"
         )
+
+def activate_template_group(group, product_actions=None):
+    """
+    Activate TemplateGroup พร้อม ProductMaster changes แบบ atomic
+
+    product_actions:
+        [
+            {
+                "action": "CREATE_PRODUCT",
+                "barcode": "...",
+                "name_th": "...",
+                "name_en": "...",
+                "pack_size": "...",
+                "unit_price": "...",
+            },
+            ...
+        ]
+
+    ยังไม่ sync filesystem จนกว่า DB transaction จะสำเร็จ
+    """
+    from django.db import transaction
+    from django.utils import timezone
+    from customers.cpall.models import TemplateGroup, TemplateVersion
+
+    product_actions = product_actions or []
+
+    with transaction.atomic():
+
+        # ----------------------------------------
+        # 1. ProductMaster
+        # ----------------------------------------
+        for item in product_actions:
+            apply_product_master_action(
+                action=item["action"],
+                barcode=item["barcode"],
+                name_th=item.get("name_th"),
+                name_en=item.get("name_en"),
+                pack_size=item.get("pack_size"),
+                unit_price=item.get("unit_price"),
+            )
+
+        # ----------------------------------------
+        # 2. หา TemplateVersion ใน Group
+        # ----------------------------------------
+        group_items = list(
+            group.items.select_related("template_version").all()
+        )
+
+        # ----------------------------------------
+        # 3. Activate TemplateVersion
+        # ----------------------------------------
+        versions = []
+
+        for item in group_items:
+            version = item.template_version
+            versions.append(version)
+
+            TemplateVersion.objects.filter(
+                template_key=version.template_key,
+                is_active=True,
+            ).exclude(id=version.id).update(
+                is_active=False
+            )
+
+            version.is_active = True
+            version.save(update_fields=["is_active"])
+
+        # ----------------------------------------
+        # 4. ปิด Group เก่า
+        # ----------------------------------------
+        TemplateGroup.objects.filter(
+            is_active=True
+        ).exclude(
+            id=group.id
+        ).update(
+            is_active=False
+        )
+
+        # ----------------------------------------
+        # 5. Activate Group ใหม่
+        # ----------------------------------------
+        group.is_active = True
+        group.activated_at = timezone.now()
+        group.save(
+            update_fields=["is_active", "activated_at"]
+        )
+
+    # ----------------------------------------
+    # 6. Sync live files หลัง DB transaction
+    # ----------------------------------------
+    for version in versions:
+        _sync_live_file(
+            version.template_key,
+            version,
+        )
+
+    return versions
 
 def _version_file_path(key: str, version_number: int) -> str:
     return os.path.join(VERSIONS_DIR, key, f"v{version_number}.xlsx")

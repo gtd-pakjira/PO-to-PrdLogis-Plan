@@ -70,6 +70,8 @@ from customers.cpall.logic.template_manager import (
     validate_group_consistency,
     _sync_live_file,
     get_group_template_versions,
+    build_group_reconcile_actions,
+    activate_template_group,
 )
 from customers.cpall.models import PlanRun
 
@@ -1295,17 +1297,190 @@ def _template_group_save(request, group):
         return response
     return redirect("cpall:template_group_detail", group_id=group.id)
 
+def template_group_reconcile_submit(request, group_id):
+    if request.method != "POST":
+        return HttpResponse(status=405)
+
+    from customers.cpall.models import TemplateGroup
+
+    group = get_object_or_404(
+        TemplateGroup.objects.prefetch_related("items__template_version"),
+        id=group_id,
+    )
+
+    production_version, logistic_versions = get_group_template_versions(group)
+
+    if production_version is None:
+        return HttpResponse(
+            "ชุดนี้ยังไม่มีแพลนผลิต",
+            status=400,
+        )
+
+    # ตรวจไฟล์กับไฟล์ใหม่อีกครั้ง
+    consistency = validate_group_consistency(
+        production_version,
+        logistic_versions,
+    )
+
+    if not consistency["is_consistent"]:
+        return HttpResponse(
+            "Template ในชุดนี้ไม่สอดคล้องกันแล้ว กรุณาตรวจสอบใหม่",
+            status=400,
+        )
+
+    # ตรวจ ProductMaster ใหม่จากข้อมูลปัจจุบัน
+    all_versions = [production_version] + logistic_versions
+
+    reconciles = [
+        reconcile_template_version(
+            key=v.template_key,
+            version_id=v.id,
+        )
+        for v in all_versions
+    ]
+
+    reconcile_data = build_group_reconcile_actions(
+        all_versions,
+        reconciles,
+    )
+
+    # ห้ามมี conflict
+    if reconcile_data["conflicts"]:
+        return HttpResponse(
+            "พบรายการ ProductMaster ที่มี action ขัดแย้งกัน",
+            status=400,
+        )
+
+    server_actions = reconcile_data["actions"]
+
+    # ตรวจ action ที่ส่งมาจากหน้าเว็บกับ action ที่ server คำนวณไว้
+    submitted_actions = list(
+        zip(
+            request.POST.getlist("action"),
+            request.POST.getlist("barcode"),
+        )
+    )
+
+    submitted_action_keys = {
+        (str(action).strip(), str(barcode).strip())
+        for action, barcode in submitted_actions
+    }
+
+    server_action_keys = {
+        (
+            str(item["action"]).strip(),
+            str(item["barcode"]).strip(),
+        )
+        for item in server_actions
+    }
+
+    if submitted_action_keys != server_action_keys:
+        return HttpResponse(
+            "รายการ ProductMaster เปลี่ยนแปลงแล้ว กรุณาตรวจสอบชุด Template ใหม่",
+            status=400,
+        )
+
+    # ตรวจข้อมูลสำหรับ CREATE_PRODUCT
+    create_data = {}
+
+    for item in server_actions:
+        if item["action"] != "CREATE_PRODUCT":
+            continue
+
+        barcode = str(item["barcode"]).strip()
+
+        name_th = str(
+            request.POST.get(f"name_th_{barcode}", "")
+        ).strip()
+
+        name_en = str(
+            request.POST.get(f"name_en_{barcode}", "")
+        ).strip()
+
+        pack_size = str(
+            request.POST.get(f"pack_size_{barcode}", "")
+        ).strip()
+
+        unit_price = str(
+            request.POST.get(f"unit_price_{barcode}", "")
+        ).strip()
+
+        if not name_th:
+            return HttpResponse(
+                f"กรุณาระบุชื่อสินค้า TH สำหรับ Barcode {barcode}",
+                status=400,
+            )
+
+        create_data[barcode] = {
+            "name_th": name_th,
+            "name_en": name_en,
+            "pack_size": pack_size,
+            "unit_price": unit_price,
+        }
+
+    # เตรียม ProductMaster actions ทั้งหมด
+    product_actions = []
+
+    for item in server_actions:
+        action = item["action"]
+        barcode = str(item["barcode"]).strip()
+
+        action_data = {
+            "action": action,
+            "barcode": barcode,
+        }
+
+        if action == "CREATE_PRODUCT":
+            data = create_data[barcode]
+
+            action_data.update({
+                "name_th": data["name_th"],
+                "name_en": data["name_en"],
+                "pack_size": data["pack_size"],
+                "unit_price": data["unit_price"],
+            })
+
+        product_actions.append(action_data)
+
+    # Commit ทุกอย่าง
+    try:
+        activate_template_group(
+            group,
+            product_actions=product_actions,
+        )
+    except Exception:
+        return HttpResponse(
+            "ไม่สามารถใช้ชุด Template ได้ กรุณาติดต่อผู้ดูแลระบบ",
+            status=400,
+        )
+
+    return redirect(
+        "cpall:template_group_detail",
+        group_id=group.id,
+    )
+
 
 def template_group_activate(request, group_id):
     """
-    ปุ่ม "ใช้ชุดนี้" — Activate ทั้ง Group พร้อมกัน (Feature 1, Step 5) — ตามลำดับที่ตกลงกันไว้:
-      [1] validate_group_consistency() — ไฟล์ในกลุ่ม match กันไหม (ไฟล์กับไฟล์ ไม่เกี่ยว ProductMaster)
-          ไม่ผ่าน → block ทันที ไม่ไปต่อเลย ต้องกลับไปแก้ไขสมาชิกกลุ่มก่อน (ผ่านหน้าแก้ไข)
-      [2] reconcile_template_version() ทีละ template ในกลุ่ม (ของเดิม เรียกซ้ำ ไม่ต้องเขียนใหม่)
-      [3a] ไม่มี mismatch เลยสักตัว → หน้า confirm (ใหม่ — รวมทุก template ในกลุ่ม)
-      [3b] มี mismatch อย่างน้อย 1 template → หน้า reconcile (reuse partial เดิม
-           _template_version_reconcile.html ต่อ template ที่ mismatch — ผูกกับ key/version_id ของ
-           ตัวเองอยู่แล้ว ไม่ต้องแก้) — Admin แก้ทีละอันผ่าน action เดิม แล้วกด "ตรวจสอบอีกครั้ง"
+    ปุ่ม "ใช้ชุดนี้" — Activate ทั้ง Group พร้อมกัน
+
+    ลำดับ:
+    [1] validate_group_consistency()
+        ไฟล์ในกลุ่มต้องสอดคล้องกันก่อน
+        ไม่ผ่าน → block และให้ดูรายละเอียด
+
+    [2] reconcile_template_version()
+        ตรวจ ProductMaster ของทุก Template
+
+    [3a] ไม่มี mismatch
+        → activate_template_group() ทันที
+        → กลับหน้า Group Detail
+
+    [3b] มี mismatch
+        → หน้า template_group_reconcile.html
+        → Admin กรอกข้อมูล CREATE_PRODUCT
+        → กด "ยืนยันใช้ชุดนี้"
+        → submit ตรวจสอบใหม่และ activate
     """
     from customers.cpall.models import TemplateGroup
 
@@ -1313,7 +1488,7 @@ def template_group_activate(request, group_id):
         return HttpResponse(status=405)
 
     group = get_object_or_404(TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id)
-    is_htmx = request.headers.get("HX-Request") == "true"
+    # is_htmx = request.headers.get("HX-Request") == "true"
 
     # production_version = None
     # logistic_versions = []
@@ -1363,7 +1538,10 @@ def template_group_activate(request, group_id):
     # [2] ตรวจ ProductMaster ทีละ template ในกลุ่ม (ของเดิม)
     all_versions = [production_version] + logistic_versions
     reconciles = [
-        reconcile_template_version(key=v.template_key, version_id=v.id)
+        reconcile_template_version(
+            key=v.template_key,
+            version_id=v.id,
+        )
         for v in all_versions
     ]
 
@@ -1373,15 +1551,52 @@ def template_group_activate(request, group_id):
     )
 
     if has_mismatch:
-        return render(request, "cpall/template_group_reconcile.html", {
-            "group": group,
-            "items": list(zip(all_versions, reconciles)),
-        })
+        reconcile_data = build_group_reconcile_actions(
+            all_versions,
+            reconciles,
+        )
 
-    # [3a] ไม่มี mismatch เลย → หน้า confirm
-    return render(request, "cpall/template_group_confirm.html", {
-        "group": group, "production_version": production_version, "logistic_versions": logistic_versions,
-    })
+        if reconcile_data["conflicts"]:
+            return render(
+                request,
+                "cpall/template_group_reconcile.html",
+                {
+                    "group": group,
+                    "actions": [],
+                    "conflicts": reconcile_data["conflicts"],
+                },
+            )
+
+        return render(
+            request,
+            "cpall/template_group_reconcile.html",
+            {
+                "group": group,
+                "actions": reconcile_data["actions"],
+                "conflicts": [],
+            },
+        )
+
+    # [3a] ไม่มี mismatch เลย → activate ทันที
+    try:
+        activate_template_group(
+            group,
+            product_actions=[],
+        )
+    except Exception:
+        response = HttpResponse(status=400)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {
+                "message": "ไม่สามารถใช้ชุด Template ได้ กรุณาติดต่อผู้ดูแลระบบ",
+                "level": "error",
+            },
+        })
+        return response
+
+    return redirect(
+        "cpall:template_group_detail",
+        group_id=group.id,
+    )
 
 
 def template_group_activate_confirm(request, group_id):
