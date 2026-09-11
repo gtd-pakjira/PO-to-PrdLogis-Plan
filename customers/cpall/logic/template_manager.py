@@ -525,6 +525,25 @@ def _sync_live_file(key: str, version):
     """คัดลอกไฟล์ของเวอร์ชันที่ระบุไปทับไฟล์ live ที่ path ตายตัว — ให้โค้ดเดิมอ่านถูกเวอร์ชันเสมอ"""
     shutil.copy2(version.file_path, get_template_registry()[key]["path"])
 
+def get_active_group_version(key: str):
+    """
+    คืน TemplateVersion ที่ถือว่า "ใช้งานจริง" ตาม Active TemplateGroup เท่านั้น
+    """
+    from customers.cpall.models import TemplateGroupItem
+
+    item = (
+        TemplateGroupItem.objects
+        .filter(
+            template_group__customer_id=get_cpall_customer_id(),
+            template_group__is_active=True,
+            template_version__template_key=key,
+        )
+        .select_related("template_version")
+        .first()
+    )
+
+    return item.template_version if item else None
+
 
 def _ensure_initial_version(key: str):
     """
@@ -551,8 +570,12 @@ def _ensure_initial_version(key: str):
         summary = "(ไฟล์เดิมก่อนมีระบบ versioning — ไม่ได้ validate ตอนสร้างเวอร์ชันนี้)"
 
     TemplateVersion.objects.create(
-        customer_id=get_cpall_customer_id(), template_key=key, version_number=1,
-        file_path=version_path, is_active=True, validation_summary=summary,
+        customer_id=get_cpall_customer_id(),
+        template_key=key,
+        version_number=1,
+        file_path=version_path,
+        is_active=False,
+        validation_summary=summary,
     )
 
 
@@ -563,7 +586,8 @@ def list_templates() -> list[dict]:
     result = []
     for key, info in get_template_registry().items():
         _ensure_initial_version(key)
-        active = TemplateVersion.objects.filter(template_key=key, is_active=True).first()
+        # Source of truth = Active TemplateGroup
+        active = get_active_group_version(key)
         total_versions = TemplateVersion.objects.filter(template_key=key).count()
         result.append({
             "key": key,
@@ -590,6 +614,9 @@ def list_versions(key: str) -> list[dict]:
 
     result = []
 
+    active_version = get_active_group_version(key)
+    active_version_id = active_version.id if active_version else None
+
     for v in versions:
         reconcile = reconcile_template_with_product_master(
             key=key,
@@ -599,7 +626,7 @@ def list_versions(key: str) -> list[dict]:
         result.append({
             "id": v.id,
             "version_number": v.version_number,
-            "is_active": v.is_active,
+            "is_active": v.id == active_version_id,
             "uploaded_at": v.uploaded_at,
             "validation_summary": v.validation_summary,
             "original_filename": v.original_filename,
@@ -804,9 +831,11 @@ def delete_version(key: str, version_id: int):
     if used_in_production or used_in_logistic:
         raise TemplateInUseError("ลบไม่ได้ — มีแผนที่เคยสร้างไว้ใช้เทมเพลตเวอร์ชันนี้อยู่")
 
-    if version.is_active:
+    active_version = get_active_group_version(key)
+
+    if active_version and active_version.id == version.id:
         raise TemplateInUseError(
-            "ลบไม่ได้ — เวอร์ชันที่กำลังใช้งานอยู่ต้องเลือกเวอร์ชันอื่นให้ใช้งานก่อน"
+            "ลบไม่ได้ — เวอร์ชันนี้กำลังถูกใช้งานอยู่ในชุด Template ที่ Active"
         )
 
     file_path = version.file_path
@@ -815,6 +844,26 @@ def delete_version(key: str, version_id: int):
     if os.path.exists(file_path):
         os.remove(file_path)
 
+def get_group_template_versions(group):
+    """คืนเฉพาะ TemplateVersion ที่อยู่ใน TemplateGroup นี้"""
+    items = (
+        group.items
+        .select_related("template_version")
+        .all()
+    )
+
+    production_version = None
+    logistic_versions = []
+
+    for item in items:
+        version = item.template_version
+
+        if version.template_key == "production_plan":
+            production_version = version
+        else:
+            logistic_versions.append(version)
+
+    return production_version, logistic_versions
 
 def validate_group_consistency(production_version, logistic_versions: list) -> dict:
     """
@@ -847,10 +896,17 @@ def validate_group_consistency(production_version, logistic_versions: list) -> d
 
     pp_wb = openpyxl.load_workbook(production_version.file_path)
     pp_ws = pp_wb[get_pp_sheet_name()]
-    pp_barcodes = set(_find_pp_sku_header_rows(pp_ws).keys())
+    pp_headers = _find_pp_sku_header_rows(pp_ws)
+    pp_barcodes = set(pp_headers.keys())
+
+    pp_product_names = {
+        barcode: str(pp_ws.cell(row=row, column=4).value or "").strip()
+        for barcode, row in pp_headers.items()
+    }
     pp_sub_locations = set(_find_sub_location_columns(pp_ws).values())
 
     # ---------- Logistic: union ของ barcode set + sub_location set จากทุกไฟล์ในชุด ----------
+    lp_product_names = {}
     lp_barcodes_union = set()
     lp_sub_locations_union = set()
 
@@ -883,9 +939,27 @@ def validate_group_consistency(production_version, logistic_versions: list) -> d
         header_rows = _find_lp_sku_header_rows(ws, name_col)
         lp_barcodes_union |= set(header_rows.keys())
 
+        for barcode, row in header_rows.items():
+            lp_product_names.setdefault(
+                barcode,
+                str(ws.cell(row=row, column=name_col).value or "").strip(),
+            )
     # ---------- เปรียบเทียบ ----------
-    product_missing_in_logistic = sorted(pp_barcodes - lp_barcodes_union)
-    product_extra_in_logistic = sorted(lp_barcodes_union - pp_barcodes)
+    product_missing_in_logistic = [
+        {
+            "barcode": barcode,
+            "item_name": pp_product_names.get(barcode, ""),
+        }
+        for barcode in sorted(pp_barcodes - lp_barcodes_union)
+    ]
+
+    product_extra_in_logistic = [
+        {
+            "barcode": barcode,
+            "item_name": lp_product_names.get(barcode, ""),
+        }
+        for barcode in sorted(lp_barcodes_union - pp_barcodes)
+    ]
     sub_location_missing_in_logistic = sorted(pp_sub_locations - lp_sub_locations_union)
     sub_location_extra_in_logistic = sorted(lp_sub_locations_union - pp_sub_locations)
 

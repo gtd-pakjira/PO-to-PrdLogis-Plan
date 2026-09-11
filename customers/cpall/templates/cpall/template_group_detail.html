@@ -31,20 +31,25 @@
         <p class="text-sm font-medium text-amber-800">⚠ ไฟล์ในชุดนี้ยังไม่ตรงกัน</p>
         {% if consistency.product_missing_in_logistic %}
         <p class="text-xs text-amber-700 mt-1.5">สินค้าที่ Production มีแต่ Logistic ไม่มีเลย:
-            {{ consistency.product_missing_in_logistic|join:", " }}</p>
+            {{ consistency.product_missing_in_logistic|length }} รายการ</p>
         {% endif %}
         {% if consistency.product_extra_in_logistic %}
         <p class="text-xs text-amber-700 mt-1">สินค้าที่ Logistic มีแต่ Production ไม่มี:
-            {{ consistency.product_extra_in_logistic|join:", " }}</p>
+            {{ consistency.product_extra_in_logistic|length }} รายการ</p>
         {% endif %}
         {% if consistency.sub_location_missing_in_logistic %}
         <p class="text-xs text-amber-700 mt-1">จุดส่งที่ Production มีแต่ Logistic ไม่มีเลย:
-            {{ consistency.sub_location_missing_in_logistic|join:", " }}</p>
+            {{ consistency.sub_location_missing_in_logistic|length }} รายการ</p>
         {% endif %}
         {% if consistency.sub_location_extra_in_logistic %}
         <p class="text-xs text-amber-700 mt-1">จุดส่งที่ Logistic มีแต่ Production ไม่มี:
-            {{ consistency.sub_location_extra_in_logistic|join:", " }}</p>
+            {{ consistency.sub_location_extra_in_logistic|length }} รายการ</p>
         {% endif %}
+
+        <a href="{% url 'cpall:template_group_consistency_detail' group.id %}"
+            class="inline-block mt-3 text-xs font-medium text-amber-800 underline hover:text-amber-900">
+            ดูรายการที่ไม่ตรงกัน
+        </a>
     </div>
     {% endif %}
 {% else %}

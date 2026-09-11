@@ -1,0 +1,121 @@
+{% extends "cpall/base.html" %}
+{% block nav_template %}active{% endblock %}
+{% block title %}รายการที่ไม่ตรงกัน — {{ group.name }}{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <a href="{% url 'cpall:template_group_detail' group.id %}"
+       class="text-sm text-stone-500 hover:text-stone-700">
+        &larr; กลับรายละเอียดชุด
+    </a>
+
+    <h1 class="text-xl font-semibold text-stone-900 mt-2">
+        รายการที่ไม่ตรงกัน
+    </h1>
+    <p class="text-sm text-stone-500 mt-1">
+        {{ group.name }}
+    </p>
+</div>
+
+<div class="space-y-4 max-w-3xl">
+    {% if consistency.product_missing_in_logistic %}
+    <div class="bg-white rounded-lg border border-stone-200 p-4">
+        <h2 class="text-sm font-semibold text-stone-900">
+            สินค้าที่แพลนผลิตมี แต่แพลนกระจายไม่มี
+            ({{ consistency.product_missing_in_logistic|length }})
+        </h2>
+
+        {% if consistency.product_missing_in_logistic %}
+        <div class="mt-3 overflow-x-auto">
+            <table class="min-w-full text-sm">
+                <thead>
+                    <tr class="border-b border-stone-200 text-left">
+                        <th class="px-3 py-2 font-medium text-stone-500">Barcode</th>
+                        <th class="px-3 py-2 font-medium text-stone-500">ชื่อสินค้า</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in consistency.product_missing_in_logistic %}
+                    <tr class="border-b border-stone-100">
+                        <td class="px-3 py-2 text-stone-700">{{ item.barcode }}</td>
+                        <td class="px-3 py-2 text-stone-900">{{ item.item_name }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if consistency.product_extra_in_logistic %}
+    <div class="bg-white rounded-lg border border-stone-200 p-4">
+        <h2 class="text-sm font-semibold text-stone-900">
+            สินค้าที่แพลนกระจายมี แต่แพลนผลิตไม่มี
+            ({{ consistency.product_extra_in_logistic|length }})
+        </h2>
+
+        {% if consistency.product_extra_in_logistic %}
+        <div class="mt-3 overflow-x-auto">
+            <table class="min-w-full text-sm">
+                <thead>
+                    <tr class="border-b border-stone-200 text-left">
+                        <th class="px-3 py-2 font-medium text-stone-500">Barcode</th>
+                        <th class="px-3 py-2 font-medium text-stone-500">ชื่อสินค้า</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in consistency.product_extra_in_logistic %}
+                    <tr class="border-b border-stone-100">
+                        <td class="px-3 py-2 text-stone-700">{{ item.barcode }}</td>
+                        <td class="px-3 py-2 text-stone-900">{{ item.item_name }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if consistency.sub_location_missing_in_logistic %}
+    <div class="bg-white rounded-lg border border-stone-200 p-4">
+        <h2 class="text-sm font-semibold text-stone-900">
+            จุดส่งที่แพลนผลิตมี แต่แพลนกระจายไม่มี
+            ({{ consistency.sub_location_missing_in_logistic|length }})
+        </h2>
+
+        {% if consistency.sub_location_missing_in_logistic %}
+        <ul class="mt-3 text-sm text-stone-700 space-y-1">
+            {% for item in consistency.sub_location_missing_in_logistic %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="mt-2 text-sm text-stone-400">ไม่มี</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if consistency.sub_location_extra_in_logistic %}
+    <div class="bg-white rounded-lg border border-stone-200 p-4">
+        <h2 class="text-sm font-semibold text-stone-900">
+            จุดส่งที่แพลนกระจายมี แต่แพลนผลิตไม่มี
+            ({{ consistency.sub_location_extra_in_logistic|length }})
+        </h2>
+
+        {% if consistency.sub_location_extra_in_logistic %}
+        <ul class="mt-3 text-sm text-stone-700 space-y-1">
+            {% for item in consistency.sub_location_extra_in_logistic %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="mt-2 text-sm text-stone-400">ไม่มี</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+</div>
+
+{% endblock %}

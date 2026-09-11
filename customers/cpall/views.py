@@ -69,6 +69,7 @@ from customers.cpall.logic.template_manager import (
     apply_product_master_action,
     validate_group_consistency,
     _sync_live_file,
+    get_group_template_versions,
 )
 from customers.cpall.models import PlanRun
 
@@ -1151,13 +1152,15 @@ def template_group_detail(request, group_id):
         TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id,
     )
 
-    production_version = None
-    logistic_versions = []
-    for item in group.items.all():
-        if item.template_version.template_key == "production_plan":
-            production_version = item.template_version
-        else:
-            logistic_versions.append(item.template_version)
+    # production_version = None
+    # logistic_versions = []
+    # for item in group.items.all():
+    #     if item.template_version.template_key == "production_plan":
+    #         production_version = item.template_version
+    #     else:
+    #         logistic_versions.append(item.template_version)
+
+    production_version, logistic_versions = get_group_template_versions(group)
 
     consistency = None
     if production_version:
@@ -1312,13 +1315,15 @@ def template_group_activate(request, group_id):
     group = get_object_or_404(TemplateGroup.objects.prefetch_related("items__template_version"), id=group_id)
     is_htmx = request.headers.get("HX-Request") == "true"
 
-    production_version = None
-    logistic_versions = []
-    for item in group.items.all():
-        if item.template_version.template_key == "production_plan":
-            production_version = item.template_version
-        else:
-            logistic_versions.append(item.template_version)
+    # production_version = None
+    # logistic_versions = []
+    # for item in group.items.all():
+    #     if item.template_version.template_key == "production_plan":
+    #         production_version = item.template_version
+    #     else:
+    #         logistic_versions.append(item.template_version)
+
+    production_version, logistic_versions = get_group_template_versions(group)
 
     if production_version is None:
         response = HttpResponse(status=400)
@@ -1340,9 +1345,17 @@ def template_group_activate(request, group_id):
         response = HttpResponse(status=400)
         response["HX-Trigger"] = json.dumps({
             "toast": {
-                "message": f"ไฟล์ในชุด '{group.name}' ยังไม่ตรงกัน ({mismatch_count} รายการ) แก้ไขให้ตรงกันก่อนถึงจะใช้ชุดนี้ได้",
+                "message": (
+                    f"ไฟล์ในชุด '{group.name}' ยังไม่ตรงกัน "
+                    f"({mismatch_count} รายการ) "
+                    "แก้ไขให้ตรงกันก่อนถึงจะใช้ชุดนี้ได้"
+                ),
                 "level": "error",
-                "detail_url": reverse("cpall:template_group_detail", args=[group.id]),
+                "detail_url": reverse(
+                    "cpall:template_group_consistency_detail",
+                    args=[group.id],
+                ),
+                "detail_label": "ดูรายการที่ไม่ตรงกัน",
             },
         })
         return response
@@ -1353,7 +1366,11 @@ def template_group_activate(request, group_id):
         reconcile_template_version(key=v.template_key, version_id=v.id)
         for v in all_versions
     ]
-    has_mismatch = any(r["mismatch_count"] > 0 for r in reconciles)
+
+    has_mismatch = any(
+        reconcile["mismatch_count"] > 0
+        for reconcile in reconciles
+    )
 
     if has_mismatch:
         return render(request, "cpall/template_group_reconcile.html", {
@@ -1994,3 +2011,30 @@ def template_view(request, key):
     except TemplateValidationError as e:
         raise Http404(str(e))
     return render(request, "cpall/template_view.html", {"key": key, "grid": grid})
+
+def template_group_consistency_detail(request, group_id):
+    from customers.cpall.models import TemplateGroup
+
+    group = get_object_or_404(
+        TemplateGroup.objects.prefetch_related("items__template_version"),
+        id=group_id,
+    )
+
+    production_version, logistic_versions = get_group_template_versions(group)
+
+    if production_version is None:
+        return HttpResponse("ยังไม่มี Production Template", status=400)
+
+    consistency = validate_group_consistency(
+        production_version,
+        logistic_versions,
+    )
+
+    return render(
+        request,
+        "cpall/template_group_consistency_detail.html",
+        {
+            "group": group,
+            "consistency": consistency,
+        },
+    )

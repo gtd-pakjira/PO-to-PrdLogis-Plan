@@ -30,7 +30,10 @@
         ::selection { background-color: #A7F3D0; }
     </style>
 </head>
-<body class="min-h-screen text-stone-800 antialiased">
+<body
+    class="min-h-screen text-stone-800 antialiased"
+    hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+>
     <div class="flex min-h-screen">
 
         <!-- Sidebar -->
