@@ -112,7 +112,18 @@
                 this.message = 'กำลังดำเนินการ กรุณารอสักครู่...'
                 this.timer = setTimeout(() => { this.visible = true }, 250)
                 this.slowTimer = setTimeout(() => {
-                    this.message = 'ระบบกำลังคำนวณแผนใหม่ อาจใช้เวลาถึง 10 วินาที กรุณารอสักครู่...'
+                    this.message = 'ระบบกำลังคำนวณ อาจใช้เวลาถึง 10 วินาที กรุณารอสักครู่...'
+                }, 3000)
+            },
+            onGroupSubmitStart() {
+                this.message = 'ระบบกำลังดำเนินการ กรุณารอสักครู่...'
+
+                this.timer = setTimeout(() => {
+                    this.visible = true
+                }, 250)
+
+                this.slowTimer = setTimeout(() => {
+                    this.message = 'ระบบกำลังดำเนินการ อาจใช้เวลาสักครู่ กรุณารอสักครู่...'
                 }, 3000)
             },
             onEnd() { clearTimeout(this.timer); clearTimeout(this.slowTimer); this.visible = false }
@@ -121,6 +132,7 @@
          @htmx:after-request.window="onEnd()"
          @htmx:response-error.window="onEnd()"
          @htmx:send-error.window="onEnd()"
+         @group-submit-loading.window="onGroupSubmitStart()"
          x-show="visible" x-cloak
          class="fixed inset-0 z-[100] bg-stone-900/30 flex items-center justify-center">
         <div class="bg-white rounded-lg px-6 py-5 shadow-xl flex items-center gap-3">

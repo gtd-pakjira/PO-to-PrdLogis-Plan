@@ -51,6 +51,7 @@
     method="post"
     action="{% url 'cpall:template_group_reconcile_submit' group.id %}"
     class="space-y-4 max-w-3xl"
+    @submit="window.dispatchEvent(new CustomEvent('group-submit-loading'))"
 >
     {% csrf_token %}
 
@@ -222,7 +223,7 @@
         type="submit"
         class="rounded-md bg-stone-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-stone-900 transition"
     >
-        ตรวจสอบและไปต่อ
+        ยืนยันใช้ชุดนี้
     </button>
 
 </div>
