@@ -34,10 +34,32 @@
             {% endif %}
         </p>
         <div class="flex items-center gap-3">
-            <a href="{% url 'cpall:template_group_detail' group.id %}"
-               class="text-sm text-stone-600 hover:text-stone-900 font-medium">ดูรายละเอียด</a>
-            <a href="{% url 'cpall:template_group_edit' group.id %}"
-               class="text-sm text-stone-600 hover:text-stone-900 font-medium">แก้ไข</a>
+            {% if not group.is_active %}
+            <button
+                type="button"
+                hx-post="{% url 'cpall:template_group_activate' group.id %}"
+                hx-target="body"
+                hx-swap="outerHTML"
+                hx-disabled-elt="this"
+                class="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 transition disabled:opacity-70"
+            >
+                ใช้ชุดนี้
+            </button>
+            {% endif %}
+
+            <a
+                href="{% url 'cpall:template_group_detail' group.id %}"
+                class="text-sm text-stone-600 hover:text-stone-900 font-medium"
+            >
+                ดูรายละเอียด
+            </a>
+
+            <a
+                href="{% url 'cpall:template_group_edit' group.id %}"
+                class="text-sm text-stone-600 hover:text-stone-900 font-medium"
+            >
+                แก้ไข
+            </a>
         </div>
     </div>
     {% empty %}
