@@ -1,14 +1,31 @@
-<div id="plan-vehicle-{{ lp.group_name }}" class="mt-2" x-data="{ editing: false }">
+<div id="plan-vehicle-{{ lp.group_name }}" class="mt-2"
+     x-data="{
+        editing: false,
+        size: '{{ lp.vehicle_size|default:'' }}',
+        vehicleId: '{{ lp.vehicle_id|default:'' }}',
+        vehicles: [{% for v in vehicles %}{id: '{{ v.id }}', plate: '{{ v.plate_number }}', size: '{{ v.vehicle_size }}'}{% if not forloop.last %},{% endif %}{% endfor %}],
+        get filteredVehicles() { return this.size ? this.vehicles.filter(v => v.size === this.size) : this.vehicles },
+        onPickVehicle() {
+            const v = this.vehicles.find(v => v.id === this.vehicleId);
+            if (v) { this.size = v.size }
+        },
+        onPickSize() {
+            // ถ้าทะเบียนที่เลือกไว้ไม่ตรงกับขนาดใหม่ ล้างทะเบียนทิ้ง (กันส่งค่าที่ไม่ตรงกันไปที่ backend)
+            const v = this.vehicles.find(v => v.id === this.vehicleId);
+            if (v && v.size !== this.size) { this.vehicleId = '' }
+        },
+     }">
     <div class="flex items-center gap-2">
         <p class="text-xs text-stone-500">
             {% if lp.vehicle_size or lp.driver_name %}
                 🚚 {{ lp.vehicle_size|default:"" }}{% if lp.vehicle_plate %} — {{ lp.vehicle_plate }}{% endif %}{% if lp.driver_name %} ({{ lp.driver_name }}){% endif %}
-            {% elif lp.suggested_vehicle_size %}
-                <span class="text-stone-400">ยังไม่ได้เลือกรถ — แนะนำ {{ lp.suggested_vehicle_size }}</span>
             {% else %}
                 <span class="text-stone-400">ยังไม่ได้เลือกรถ</span>
             {% endif %}
         </p>
+        {% if lp.suggested_vehicle_size and lp.vehicle_size and lp.suggested_vehicle_size != lp.vehicle_size %}
+        <span class="text-xs text-red-600 font-medium">⚠ แนะนำใหม่: {{ lp.suggested_vehicle_size }}</span>
+        {% endif %}
         <button type="button" @click="editing = !editing"
                 class="text-xs text-stone-500 hover:text-stone-700 underline"
                 x-text="editing ? 'ยกเลิก' : 'เลือกรถ'"></button>
@@ -21,23 +38,23 @@
           class="mt-2 flex flex-wrap items-center gap-2">
         {% csrf_token %}
 
-        <select name="vehicle_size" class="rounded-md border border-stone-300 text-xs px-2 py-1.5">
+        <select name="vehicle_size" x-model="size" @change="onPickSize()"
+                class="rounded-md border border-stone-300 text-xs px-2 py-1.5">
             <option value="">-- ไม่ระบุขนาด --</option>
             {% regroup vehicles by vehicle_size as size_groups %}
             {% for g in size_groups %}
-            <option value="{{ g.grouper }}" {% if lp.vehicle_size == g.grouper %}selected{% endif %}>
+            <option value="{{ g.grouper }}">
                 {{ g.grouper }}{% if lp.suggested_vehicle_size == g.grouper %} (แนะนำ){% endif %}
             </option>
             {% endfor %}
         </select>
 
-        <select name="vehicle_id" class="rounded-md border border-stone-300 text-xs px-2 py-1.5">
+        <select name="vehicle_id" x-model="vehicleId" @change="onPickVehicle()"
+                class="rounded-md border border-stone-300 text-xs px-2 py-1.5">
             <option value="">-- ไม่ระบุทะเบียน --</option>
-            {% for v in vehicles %}
-            <option value="{{ v.id }}" {% if lp.vehicle_id == v.id %}selected{% endif %}>
-                {{ v.plate_number }} ({{ v.vehicle_size }})
-            </option>
-            {% endfor %}
+            <template x-for="v in filteredVehicles" :key="v.id">
+                <option :value="v.id" x-text="v.plate + ' (' + v.size + ')'"></option>
+            </template>
         </select>
 
         <input type="text" name="driver_name" placeholder="ชื่อคนขับ (ถ้ามี)" value="{{ lp.driver_name|default:'' }}"
@@ -49,3 +66,4 @@
         </button>
     </form>
 </div>
+

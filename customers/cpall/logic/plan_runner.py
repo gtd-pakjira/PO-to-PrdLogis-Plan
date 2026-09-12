@@ -119,6 +119,19 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     # จะไม่มีข้อมูลสำหรับแผนนี้ — log ไว้ให้เห็นชัดเจนแทนที่จะทำให้ทั้ง request ล้ม)
     extracted_ok = _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results)
 
+    # แนะนำขนาดรถอัตโนมัติทันทีตอนสร้างแผนครั้งแรก (เลือกรถ feature ต่อยอด — 2025-09-12) — ทำแค่ตอน
+    # สร้างแผนใหม่เท่านั้น (run_plan) ไม่ทำตอน recalculate เพราะ edit_buffer_and_regenerate() ไม่เรียก
+    # ตรงนี้เลย — ถ้า recalculate ไปเขียนทับด้วยจะลบค่าที่ Admin เคยเลือกเองไว้เงียบๆ (ตกลงกันไว้ว่า
+    # ไม่ทับ แค่เตือน) Admin ยังแก้ไขเองทีหลังได้เสมอถ้าไม่เห็นด้วยกับคำแนะนำ
+    for group_name, result in logistic_results.items():
+        if result["status"] != "success":
+            continue
+        suggested_size, _ = suggest_vehicle_size(plan_run_id, group_name)
+        if suggested_size:
+            PlanRunLogisticFile.objects.filter(
+                plan_run_id=plan_run_id, group_name=group_name,
+            ).update(vehicle_size=suggested_size)
+
     # ---------- ลบไฟล์ Excel ที่ extract ข้อมูลเข้า plan_sku_result สำเร็จแล้วทิ้ง (data-first เต็มรูป
     # แบบ) — เว็บอ่านจาก DB อยู่แล้ว ดาวน์โหลดก็ regenerate จาก DB+เทมเพลตใหม่ทุกครั้งอยู่แล้ว ไฟล์ที่
     # เขียนไว้ตอนสร้างแผนไม่มีประโยชน์อะไรอีก — ไฟล์ที่ extract ไม่สำเร็จ (หายาก) เก็บไว้เป็น fallback

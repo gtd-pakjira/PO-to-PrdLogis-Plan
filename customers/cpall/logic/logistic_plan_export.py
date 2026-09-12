@@ -778,21 +778,23 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str,buffer
         f"จัดเลขลำดับใหม่แล้ว {renumbered_count} SKU"
     )
 
-    # เขียนทับเซลล์ "ผู้ส่ง : ..." ด้วยข้อมูลรถที่ Admin เลือกไว้ (เลือกรถ feature — 2025-09-12) — หา
-    # ตำแหน่งแบบ dynamic เสมอ (ดู docstring ของ _find_driver_header_cell) ไม่เขียนอะไรเลยถ้า Admin
-    # ไม่ได้เลือกอะไรมา (vehicle_info ว่างเปล่าหรือ None) กันทับข้อมูลเดิมในเทมเพลตโดยไม่ตั้งใจ
-    if vehicle_info and any(vehicle_info.values()):
-        cell_pos = _find_driver_header_cell(ws)
-        if cell_pos:
-            row, col = cell_pos
-            parts = [f"ผู้ส่ง : 7-11 {group_name}"]
+    # เขียนทับเซลล์ "ผู้ส่ง : ..." เสมอหลังสร้าง/regenerate แผน (เลือกรถ feature ต่อยอด — 2025-09-12)
+    # เดิมเช็คก่อนว่ามีข้อมูลรถไหมถึงจะเขียน แต่พอมี auto-suggest แล้วทุกกลุ่มที่มีข้อมูลจะมี
+    # vehicle_size เสมอ (ยกเว้น Admin ตั้งใจล้างออกเอง) — เขียนทับเสมอเพื่อไม่ให้ข้อมูลรถผิด/ค้างจาก
+    # เทมเพลตเดิม (ปัญหาเดิมที่ฟีเจอร์นี้ตั้งใจแก้) ค้างอยู่ได้อีกเลย ถ้าไม่มีข้อมูลอะไรเลยจริงๆ
+    # (Admin ล้างออกเอง) จะเหลือแค่ "ผู้ส่ง : 7-11 [กลุ่ม]" เฉยๆ ไม่ใช่ค่าเดิมจาก template
+    cell_pos = _find_driver_header_cell(ws)
+    if cell_pos:
+        row, col = cell_pos
+        parts = [f"ผู้ส่ง : 7-11 {group_name}"]
+        if vehicle_info:
             if vehicle_info.get("vehicle_size"):
                 parts.append(vehicle_info["vehicle_size"])
             if vehicle_info.get("vehicle_plate"):
                 parts.append(vehicle_info["vehicle_plate"])
             if vehicle_info.get("driver_name"):
                 parts.append(vehicle_info["driver_name"])
-            ws.cell(row=row, column=col).value = " ".join(parts)
+        ws.cell(row=row, column=col).value = " ".join(parts)
 
     wb.save(output_path)
 
