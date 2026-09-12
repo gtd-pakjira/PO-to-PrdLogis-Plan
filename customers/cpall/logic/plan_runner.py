@@ -33,7 +33,7 @@ from customers.cpall.logic.logistic_plan_export import (
     get_group_templates,
     group_has_data,
 )
-from customers.cpall.models import LogisticGroup, PlanRun, PlanRunLogisticFile
+from customers.cpall.models import LogisticGroup, PlanRun, PlanRunLogisticFile, PlanSkuResult
 
 
 def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_override: dict = None) -> dict:
@@ -379,7 +379,23 @@ def edit_buffer_and_regenerate(plan_run_id: int, buffer_override: dict) -> dict:
 
     # ลบผลลัพธ์เก่าของแผนนี้ทิ้งก่อนเสมอ (bulk_create ด้านล่างไม่ใช่ update — ถ้าไม่ลบก่อนจะได้แถวซ้ำ)
     PlanSkuResult.objects.filter(plan_run_id=plan_run_id).delete()
-    extracted_ok = _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results)
+    extracted_ok = _extract_and_save_sku_results(
+        plan_run_id,
+        production_plan_result,
+        logistic_results,
+    )
+
+    # Add PO / Recalculate ใช้ PlanRun เดิม
+    # จึงต้อง sync สถานะ Logistic ล่าสุดกลับเข้า PlanRunLogisticFile
+    for group_name, result in logistic_results.items():
+        PlanRunLogisticFile.objects.filter(
+            plan_run_id=plan_run_id,
+            group_name=group_name,
+        ).update(
+            status=result["status"],
+            file_path=result["path"],
+            error_message=result["error"],
+        )
 
     if "production" in extracted_ok and production_plan_result["path"] and os.path.exists(production_plan_result["path"]):
         os.remove(production_plan_result["path"])
