@@ -1,0 +1,33 @@
+<div id="plan-note" class="mb-6 max-w-2xl" x-data="{ editing: false }">
+    <div class="flex items-center gap-2 mb-1.5">
+        <h2 class="text-sm font-medium text-stone-700">หมายเหตุ</h2>
+        <button type="button" @click="editing = !editing"
+                class="text-xs text-stone-500 hover:text-stone-700"
+                x-text="editing ? 'ยกเลิก' : 'แก้ไข'"></button>
+    </div>
+
+    <p x-show="!editing"
+       class="text-sm {% if plan.note %}text-stone-600{% else %}text-stone-400{% endif %}">
+        {{ plan.note|default:"— ยังไม่มีหมายเหตุ —" }}
+    </p>
+
+    <form
+        x-show="editing"
+        x-cloak
+        hx-post="{% url 'cpall:plan_note_submit' plan.id %}"
+        hx-target="#plan-note"
+        hx-swap="outerHTML"
+        @htmx:after-request="editing = false"
+    >
+        {% csrf_token %}
+
+        <textarea name="note" rows="2"
+                  class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm">{{ plan.note|default:'' }}</textarea>
+
+        <button type="submit"
+                hx-disabled-elt="this"
+                class="mt-1.5 rounded-md bg-stone-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-900 transition disabled:opacity-70">
+            บันทึกหมายเหตุ
+        </button>
+    </form>
+</div>

@@ -1185,10 +1185,18 @@ def plan_note_submit(request, plan_run_id):
     plan_run.note = request.POST.get("note", "").strip() or None
     plan_run.save(update_fields=["note"])
     if request.headers.get("HX-Request") == "true":
-        response = HttpResponse(status=200)
-        response["HX-Trigger"] = json.dumps({"toast": {"message": "บันทึกหมายเหตุแล้ว", "level": "success"}})
+        response = render(
+            request,
+            "cpall/_plan_note.html",
+            {"plan": plan_run},
+        )
+        response["HX-Trigger"] = json.dumps({
+            "toast": {
+                "message": "บันทึกหมายเหตุแล้ว",
+                "level": "success"
+            }
+        })
         return response
-    return redirect("cpall:view_plan", plan_run_id=plan_run_id)
 
 
 def _set_download_filename(response, filename):
