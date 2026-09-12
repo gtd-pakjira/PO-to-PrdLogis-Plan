@@ -1470,6 +1470,92 @@ def template_group_edit(request, group_id):
         })
     return _template_group_save(request, group=group)
 
+def template_group_delete(request, group_id):
+    from customers.cpall.models import TemplateGroup
+
+    if request.method != "POST":
+        return redirect("cpall:template_list")
+
+    group = get_object_or_404(TemplateGroup, id=group_id)
+
+    if group.is_active:
+        response = HttpResponse(status=409)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {
+                "message": "ลบไม่ได้ — ชุด Template นี้กำลังถูกใช้งานอยู่",
+                "level": "error",
+            }
+        })
+        return response
+
+    group.delete()
+
+    if request.headers.get("HX-Request") == "true":
+        response = HttpResponse(status=200)
+        response["HX-Redirect"] = reverse("cpall:template_list")
+        response["HX-Trigger"] = json.dumps({
+            "toast": {
+                "message": "ลบชุด Template สำเร็จ",
+                "level": "success",
+            }
+        })
+        return response
+
+    return redirect("cpall:template_list")
+
+def template_group_download_zip(request, group_id):
+    from customers.cpall.models import TemplateGroup
+
+    group = get_object_or_404(
+        TemplateGroup.objects.prefetch_related("items__template_version"),
+        id=group_id,
+    )
+
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in group.items.all():
+            version = item.template_version
+
+            if not version.file_path or not os.path.exists(version.file_path):
+                continue
+
+            original_name = os.path.basename(
+                version.original_filename
+                or f"{version.template_key}_v{version.version_number}.xlsx"
+            )
+
+            filename = f"v{version.version_number}_{original_name}"
+
+            if version.template_key == "production_plan":
+                folder = "production_plan"
+            else:
+                registry = get_template_registry()
+                label = registry.get(
+                    version.template_key,
+                    {},
+                ).get("group", version.template_key)
+
+                folder = f"logistic_{label}"
+
+            zf.write(
+                version.file_path,
+                arcname=os.path.join(folder, filename),
+            )
+
+    buffer.seek(0)
+
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/zip",
+    )
+
+    _set_download_filename(
+        response,
+        f"TemplateGroup_{group.name}.zip",
+    )
+
+    return response
 
 def _template_group_save(request, group):
     """บันทึกฟอร์มสร้าง/แก้ไข Group จริง — รองรับทั้ง 'เลือกเวอร์ชันที่มีอยู่' และ 'อัปโหลดไฟล์ใหม่'

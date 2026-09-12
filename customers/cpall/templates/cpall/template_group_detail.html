@@ -14,7 +14,10 @@
         {% endif %}
     </div>
     {% if group.note %}<p class="text-sm text-stone-500 mt-1">{{ group.note }}</p>{% endif %}
+    
 </div>
+
+
 
 {% if consistency %}
     {% if consistency.error %}
@@ -71,6 +74,32 @@
             class="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 transition disabled:opacity-70">
         ใช้ชุดนี้
     </button>
+    {% endif %}
+
+    <a
+        href="{% url 'cpall:template_group_download_zip' group.id %}"
+        class="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 transition"
+    >
+        ดาวน์โหลด ZIP
+    </a>
+
+    {% if not group.is_active %}
+    <form
+        method="post"
+        action="{% url 'cpall:template_group_delete' group.id %}"
+        hx-post="{% url 'cpall:template_group_delete' group.id %}"
+        hx-confirm="ลบชุด Template '{{ group.name }}' ใช่หรือไม่? ตัว Template และประวัติเวอร์ชันจะไม่ถูกลบ"
+        class="inline"
+    >
+        {% csrf_token %}
+        <button
+            type="submit"
+            hx-disabled-elt="this"
+            class="rounded-md border border-red-200 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 transition disabled:opacity-70"
+        >
+            ลบชุดนี้
+        </button>
+    </form>
     {% endif %}
 </div>
 
