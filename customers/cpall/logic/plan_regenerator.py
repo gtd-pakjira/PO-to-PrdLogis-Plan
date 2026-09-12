@@ -41,6 +41,7 @@ from customers.cpall.logic.grouping import (
 from customers.cpall.logic.logistic_plan_export import (
     _find_buffer_column,
     _find_column_labels,
+    _find_driver_header_cell,
     _find_line_no_column,
     _find_qty_column_range,
     _renumber_logistic_sku_rows,
@@ -352,6 +353,22 @@ def regenerate_logistic_plan_bytes(plan_run_id: int, group_name: str) -> bytes:
 
     col_to_sub_location = {col: sub_loc for col, (sub_loc, _) in col_labels.items()}
     _update_dates(ws, plan_run, col_to_sub_location)
+
+    # เขียนทับเซลล์ "ผู้ส่ง : ..." ด้วยข้อมูลรถที่บันทึกไว้ (เลือกรถ feature — 2025-09-12) — ใช้
+    # logistic_file object ที่มีอยู่แล้ว (query ไปแล้วต้นฟังก์ชัน) ไม่ query ซ้ำ — ไม่เขียนอะไรเลยถ้า
+    # ยังไม่เคยเลือกรถ (กันทับข้อมูลเดิมในเทมเพลตโดยไม่ตั้งใจ)
+    if logistic_file.vehicle_size or logistic_file.vehicle_id or logistic_file.driver_name:
+        cell_pos = _find_driver_header_cell(ws)
+        if cell_pos:
+            row, col = cell_pos
+            parts = [f"ผู้ส่ง : 7-11 {group_name}"]
+            if logistic_file.vehicle_size:
+                parts.append(logistic_file.vehicle_size)
+            if logistic_file.vehicle_id:
+                parts.append(logistic_file.vehicle.plate_number)
+            if logistic_file.driver_name:
+                parts.append(logistic_file.driver_name)
+            ws.cell(row=row, column=col).value = " ".join(parts)
 
     buffer = io.BytesIO()
     wb.save(buffer)

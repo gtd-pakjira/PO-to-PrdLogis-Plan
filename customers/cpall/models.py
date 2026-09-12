@@ -347,6 +347,32 @@ class PlanSkuResult(models.Model):
         return f"{self.barcode} — {self.column_label}"
 
 
+class Vehicle(models.Model):
+    """
+    รถที่มีจริง (ทะเบียน + ความจุตะกร้า + ขนาด) — Admin จัดการผ่าน Django Admin (2025-09-12)
+    ไม่ผูกกับ LogisticGroup เพราะรถคันเดียวใช้วิ่งกลุ่มไหนก็ได้ เลือกอิสระต่อแผนแต่ละครั้ง
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
+    plate_number = models.CharField(max_length=20, verbose_name="ทะเบียนรถ")
+    basket_capacity = models.IntegerField(verbose_name="ความจุตะกร้า")
+    vehicle_size = models.CharField(max_length=30, verbose_name="ขนาดรถ")
+    is_active = models.BooleanField(default=True, verbose_name="ใช้งานอยู่")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "vehicle"
+        managed = False
+        verbose_name = "รถ"
+        verbose_name_plural = "รถ"
+        constraints = [
+            models.UniqueConstraint(fields=["customer", "plate_number"], name="vehicle_customer_plate_key"),
+        ]
+        ordering = ["basket_capacity"]
+
+    def __str__(self):
+        return f"{self.plate_number} ({self.vehicle_size}, {self.basket_capacity} ตะกร้า)"
+
+
 class PlanRunLogisticFile(models.Model):
     plan_run = models.ForeignKey(PlanRun, on_delete=models.CASCADE, db_column="plan_run_id",
                                   related_name="logistic_files")
@@ -358,6 +384,13 @@ class PlanRunLogisticFile(models.Model):
         TemplateVersion, on_delete=models.SET_NULL, db_column="template_version_id",
         blank=True, null=True, related_name="+",
     )
+    # เลือกรถ (2025-09-12) — ทุกช่องไม่บังคับ (Admin ไม่เลือกอะไรเลยก็ได้)
+    vehicle_size = models.CharField(max_length=30, blank=True, null=True, verbose_name="ขนาดรถ")
+    vehicle = models.ForeignKey(
+        Vehicle, on_delete=models.SET_NULL, db_column="vehicle_id",
+        blank=True, null=True, related_name="+", verbose_name="ทะเบียนรถ",
+    )
+    driver_name = models.CharField(max_length=100, blank=True, null=True, verbose_name="คนขับ")
 
     class Meta:
         db_table = "plan_run_logistic_file"

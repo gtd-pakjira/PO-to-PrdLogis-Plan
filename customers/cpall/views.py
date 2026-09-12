@@ -1168,9 +1168,29 @@ def add_po_submit(request, plan_run_id):
         return error_response(f"เพิ่ม PO ไม่สำเร็จ: {type(e).__name__}: {e}", status=500)
 
     if is_htmx:
+        # เตือนถ้ายอดตะกร้าใหม่เกินความจุรถที่เคยเลือกไว้ (เลือกรถ feature — 2025-09-12) — เช็คแค่กลุ่ม
+        # ที่เคยเลือกทะเบียนรถจริงไว้ (ไม่ใช่แค่ขนาด เพราะต้องรู้ capacity ตัวเลขจริงมาเทียบ) ไม่บังคับ
+        # เปลี่ยนอะไรเลย แค่แจ้งให้ Admin รู้ตัวไปเช็คเอง ตามที่ตกลงกันไว้ว่า "เตือนแต่ไม่บังคับเปลี่ยน"
+        from customers.cpall.logic.plan_view_data import suggest_vehicle_size
+        from customers.cpall.models import PlanRunLogisticFile
+
+        overflow_groups = []
+        for lf in PlanRunLogisticFile.objects.filter(
+            plan_run_id=plan_run_id, vehicle__isnull=False,
+        ).select_related("vehicle"):
+            _, total_basket = suggest_vehicle_size(plan_run_id, lf.group_name)
+            if total_basket > lf.vehicle.basket_capacity:
+                overflow_groups.append(f"{lf.group_name} ({total_basket}/{lf.vehicle.basket_capacity} ตะกร้า)")
+
+        message = f"เพิ่ม PO {len(new_po_ids)} รอบ และคำนวณแผนใหม่แล้ว"
+        level = "success"
+        if overflow_groups:
+            message += f" — ⚠ ยอดตะกร้าเกินความจุรถที่เคยเลือกไว้: {', '.join(overflow_groups)}"
+            level = "warning"
+
         response = HttpResponse(status=200)
         response["HX-Trigger"] = json.dumps({
-            "toast": {"message": f"เพิ่ม PO {len(new_po_ids)} รอบ และคำนวณแผนใหม่แล้ว", "level": "success"},
+            "toast": {"message": message, "level": level},
             "replaceLocation": {"url": reverse("cpall:view_plan", args=[plan_run_id])},
         })
         return response
@@ -1199,6 +1219,56 @@ def plan_note_submit(request, plan_run_id):
         return response
 
 
+def plan_vehicle_submit(request, plan_run_id, group_name):
+    """
+    บันทึกการเลือกรถของกลุ่ม logistic หนึ่งกลุ่มในแผนนี้ (เลือกรถ feature — 2025-09-12)
+
+    ทุกช่องไม่บังคับ (Admin เว้นว่างได้หมด — ไม่มีอะไรถูกเขียนทับใน Excel ถ้าไม่กรอกอะไรเลย)
+    vehicle_size แยกเป็นอิสระจาก vehicle (ทะเบียน) เพราะ Admin อาจจะรู้แค่ขนาดที่ต้องใช้ (ตามที่ระบบ
+    แนะนำ) โดยยังไม่รู้ว่าจะได้ทะเบียนไหนจริง — ไม่บังคับให้ต้องเลือกทะเบียนก่อนถึงจะเลือกขนาดได้
+    """
+    from customers.cpall.models import PlanRunLogisticFile
+    from customers.cpall.models import Vehicle as VehicleModel
+
+    if request.method != "POST":
+        return redirect("cpall:view_plan", plan_run_id=plan_run_id)
+
+    lf = get_object_or_404(PlanRunLogisticFile, plan_run_id=plan_run_id, group_name=group_name)
+
+    vehicle_size = request.POST.get("vehicle_size", "").strip() or None
+    vehicle_id = request.POST.get("vehicle_id", "").strip() or None
+    driver_name = request.POST.get("driver_name", "").strip() or None
+
+    vehicle = None
+    if vehicle_id:
+        vehicle = VehicleModel.objects.filter(id=vehicle_id).first()
+        if vehicle:
+            vehicle_size = vehicle.vehicle_size  # ทะเบียนที่เลือกกำหนดขนาดที่แท้จริงเสมอ
+
+    lf.vehicle_size = vehicle_size
+    lf.vehicle = vehicle
+    lf.driver_name = driver_name
+    lf.save(update_fields=["vehicle_size", "vehicle", "driver_name"])
+
+    if request.headers.get("HX-Request") == "true":
+        from customers.cpall.logic.plan_view_data import suggest_vehicle_size
+
+        suggested, _ = suggest_vehicle_size(plan_run_id, group_name) if lf.status == "success" else (None, 0)
+        response = render(request, "cpall/_plan_vehicle.html", {
+            "plan_run_id": plan_run_id,
+            "lp": {
+                "group_name": group_name, "status": lf.status,
+                "vehicle_size": lf.vehicle_size, "vehicle_id": lf.vehicle_id,
+                "vehicle_plate": lf.vehicle.plate_number if lf.vehicle else None,
+                "driver_name": lf.driver_name, "suggested_vehicle_size": suggested,
+            },
+            "vehicles": VehicleModel.objects.filter(is_active=True),
+        })
+        response["HX-Trigger"] = json.dumps({"toast": {"message": "บันทึกข้อมูลรถแล้ว", "level": "success"}})
+        return response
+    return redirect("cpall:view_plan", plan_run_id=plan_run_id)
+
+
 def _set_download_filename(response, filename):
     """
     ตั้งชื่อไฟล์ดาวน์โหลดแบบรองรับภาษาไทยให้ถูกต้องตามมาตรฐาน RFC 6266 (filename*=UTF-8''...)
@@ -1215,6 +1285,8 @@ def _set_download_filename(response, filename):
 
 
 def view_plan(request, plan_run_id):
+    from customers.cpall.models import Vehicle
+
     detail = get_plan_run_detail(plan_run_id)
     if detail is None:
         return render(request, "cpall/plan_not_found.html", {"plan_run_id": plan_run_id}, status=404)
@@ -1222,6 +1294,7 @@ def view_plan(request, plan_run_id):
     skipped_skus = get_skipped_skus(plan_run_id)
     return render(request, "cpall/plan_view.html", {
         "plan": detail, "plan_name": plan_name, "skipped_skus": skipped_skus,
+        "vehicles": Vehicle.objects.filter(is_active=True),
     })
 
 

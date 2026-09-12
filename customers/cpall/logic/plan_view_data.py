@@ -348,3 +348,25 @@ def get_skipped_skus(plan_run_id: int) -> list:
         {"barcode": b, "name_th": by_barcode[b]["name_th"]}
         for b in sorted(skipped_barcodes) if b not in inactive_set
     ]
+
+
+def suggest_vehicle_size(plan_run_id: int, group_name: str):
+    """
+    แนะนำขนาดรถตามยอดตะกร้ารวมของกลุ่ม logistic นี้ (2025-09-12) — รวมตะกร้าทุกคอลัมน์ (จุดส่ง x PO)
+    ในกลุ่มเข้าด้วยกัน (ใช้ basket_total_by_column ที่มีอยู่แล้ว ไม่คำนวณซ้ำ) แล้วหารถขนาดเล็กที่สุดที่
+    ความจุยังพอ (Vehicle.objects.order_by("basket_capacity") ที่ตั้งไว้ใน Meta.ordering อยู่แล้ว)
+
+    คืนค่า (vehicle_size: str, total_basket: int) หรือ (None, total_basket) ถ้าตะกร้ารวมเกินรถที่ใหญ่
+    ที่สุดที่มี (Admin ต้องแบ่งเป็นหลายคันเอง ระบบไม่ตัดสินใจแทน)
+    """
+    from customers.cpall.models import Vehicle
+
+    table = get_logistic_plan_table_from_db(plan_run_id, group_name)
+    total_basket = sum(table["basket_total_by_column"].values())
+
+    fitting = (
+        Vehicle.objects.filter(is_active=True, basket_capacity__gte=total_basket)
+        .order_by("basket_capacity")
+        .first()
+    )
+    return (fitting.vehicle_size if fitting else None), total_basket

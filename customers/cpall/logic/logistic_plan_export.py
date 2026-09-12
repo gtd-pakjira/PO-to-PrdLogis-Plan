@@ -144,6 +144,23 @@ def group_has_data(po_import_ids, group_name: str) -> bool:
     return any(r["sub_location"] in group_subs for r in raw)
 
 
+def _find_driver_header_cell(ws, search_rows=range(1, 15), search_cols=range(1, 15)):
+    """
+    หาเซลล์ "ผู้ส่ง : ..." ในหัวไฟล์ (เลือกรถ feature — 2025-09-12) — ตำแหน่งไม่คงที่ในแต่ละไฟล์กลุ่ม
+    (เจอ B6, B4, C2, B10 ในไฟล์ตัวอย่างจริงต่างกันหมด เพราะเทมเพลตแต่ละกลุ่มแยกจัดทำเอง) ต้องสแกนหา
+    แบบ dynamic เสมอ ไม่ hardcode ตำแหน่ง
+
+    คืนค่า (row, col) หรือ None ถ้าไม่เจอเลย — ไม่ raise error เพราะเป็น field เสริม (Admin ไม่เลือก
+    รถเลยก็ได้) ถ้าเทมเพลตกลุ่มไหนไม่มีเซลล์นี้อยู่แต่แรก ก็แค่ไม่มีที่ให้เขียนทับ ปล่อยผ่านเงียบๆ
+    """
+    for row in search_rows:
+        for col in search_cols:
+            val = ws.cell(row=row, column=col).value
+            if val and isinstance(val, str) and val.strip().startswith("ผู้ส่ง"):
+                return row, col
+    return None
+
+
 def _find_line_no_column(ws, search_rows=range(1, 60), search_cols=range(1, 10)):
     """
     หาคอลัมน์ 'ลำดับ' (บรรทัดแรกของ SKU แต่ละตัว = เลข 1, 2, 3, ...)
@@ -551,11 +568,14 @@ def validate_logistic_plan(po_import_ids, group_name: str) -> dict:
     finally:
         wb.close()
 
-def export_logistic_plan(po_import_ids, group_name: str, output_path: str,buffer_override: dict = None,):
+def export_logistic_plan(po_import_ids, group_name: str, output_path: str,buffer_override: dict = None, vehicle_info: dict = None,):
     """
     po_import_ids: รับได้ทั้ง int เดี่ยว หรือ list ของ int
     วันที่ในหัวไฟล์: ดึงจากวันที่ที่ผูกไว้กับรอบ PO ที่มีข้อมูลของกลุ่มนี้ (ไฟล์นี้มาจากรอบเดียวเสมอ
     ในทางปฏิบัติ เพราะจุดส่งย่อยของกลุ่มหนึ่งอยู่ในรอบ PO เดียวกันหมด)
+    vehicle_info: {"vehicle_size":, "vehicle_plate":, "driver_name":} หรือ None (เลือกรถ feature —
+    2025-09-12) — ไม่บังคับเลย ถ้า None หรือทุกช่องว่างหมด จะไม่แตะเซลล์ "ผู้ส่ง" เลย ปล่อยเป็นค่าเดิม
+    จากเทมเพลต (กันเขียนทับข้อมูลเก่าโดยไม่ตั้งใจตอนยังไม่ได้เลือกรถ)
     """
     if isinstance(po_import_ids, int):
         po_import_ids = [po_import_ids]
@@ -757,6 +777,22 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str,buffer
         f"[logistic_plan_export:{group_name}] "
         f"จัดเลขลำดับใหม่แล้ว {renumbered_count} SKU"
     )
+
+    # เขียนทับเซลล์ "ผู้ส่ง : ..." ด้วยข้อมูลรถที่ Admin เลือกไว้ (เลือกรถ feature — 2025-09-12) — หา
+    # ตำแหน่งแบบ dynamic เสมอ (ดู docstring ของ _find_driver_header_cell) ไม่เขียนอะไรเลยถ้า Admin
+    # ไม่ได้เลือกอะไรมา (vehicle_info ว่างเปล่าหรือ None) กันทับข้อมูลเดิมในเทมเพลตโดยไม่ตั้งใจ
+    if vehicle_info and any(vehicle_info.values()):
+        cell_pos = _find_driver_header_cell(ws)
+        if cell_pos:
+            row, col = cell_pos
+            parts = [f"ผู้ส่ง : 7-11 {group_name}"]
+            if vehicle_info.get("vehicle_size"):
+                parts.append(vehicle_info["vehicle_size"])
+            if vehicle_info.get("vehicle_plate"):
+                parts.append(vehicle_info["vehicle_plate"])
+            if vehicle_info.get("driver_name"):
+                parts.append(vehicle_info["driver_name"])
+            ws.cell(row=row, column=col).value = " ".join(parts)
 
     wb.save(output_path)
 

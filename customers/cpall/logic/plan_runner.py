@@ -33,6 +33,7 @@ from customers.cpall.logic.logistic_plan_export import (
     get_group_templates,
     group_has_data,
 )
+from customers.cpall.logic.plan_view_data import suggest_vehicle_size
 from customers.cpall.models import LogisticGroup, PlanRun, PlanRunLogisticFile, PlanSkuResult
 
 
@@ -294,8 +295,19 @@ def get_plan_run_detail(plan_run_id: int) -> dict | None:
 
     result["logistic_plans"] = sorted(
         [
-            {"group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
-            "error_message": lf.error_message}
+            {
+                "group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
+                "error_message": lf.error_message,
+                "vehicle_size": lf.vehicle_size, "vehicle_id": lf.vehicle_id,
+                "vehicle_plate": lf.vehicle.plate_number if lf.vehicle else None,
+                "driver_name": lf.driver_name,
+                # แนะนำขนาดรถจากยอดตะกร้าจริง (2025-09-12) — คำนวณสดทุกครั้ง ไม่ cache เพราะยอดอาจ
+                # เปลี่ยนได้ทุกครั้งที่ recalculate (Add PO / แก้ยอดเผื่อ) — คิดเฉพาะกลุ่มที่มีข้อมูลจริง
+                # (skipped/failed ไม่มี basket ให้แนะนำ)
+                "suggested_vehicle_size": (
+                    suggest_vehicle_size(plan_run_id, lf.group_name)[0] if lf.status == "success" else None
+                ),
+            }
             for lf in plan_run.logistic_files.all()
         ],
         key=lambda x: (display_orders.get(x["group_name"], 9999), x["group_name"]),
@@ -366,13 +378,27 @@ def edit_buffer_and_regenerate(plan_run_id: int, buffer_override: dict) -> dict:
         production_plan_result = {"status": "failed", "path": None, "error": str(e)}
 
     logistic_results = {}
+    # ดึงข้อมูลรถที่เคยเลือกไว้มาส่งต่อ (เลือกรถ feature — 2025-09-12) — ไม่งั้นจะหายทุกครั้งที่
+    # recalculate (แก้ยอดเผื่อ/Add PO) เพราะฟังก์ชันนี้สร้างไฟล์ใหม่ทับของเดิมเสมอ ต้องอ่านค่าที่บันทึก
+    # ไว้ใน DB มาใส่คืนให้ ไม่ใช่ปล่อยว่างจนข้อมูลที่ Admin เลือกไว้หายไปเงียบๆ
+    vehicle_info_by_group = {
+        lf.group_name: {
+            "vehicle_size": lf.vehicle_size,
+            "vehicle_plate": lf.vehicle.plate_number if lf.vehicle else None,
+            "driver_name": lf.driver_name,
+        }
+        for lf in PlanRunLogisticFile.objects.filter(plan_run_id=plan_run_id).select_related("vehicle")
+    }
     for group_name in get_group_templates():
         if not group_has_data(po_import_ids, group_name):
             logistic_results[group_name] = {"status": "skipped", "path": None, "error": None}
             continue
         logistic_path = f"{output_dir}/{group_name}.xlsx"
         try:
-            export_logistic_plan(po_import_ids, group_name, logistic_path, buffer_override=buffer_override,)
+            export_logistic_plan(
+                po_import_ids, group_name, logistic_path, buffer_override=buffer_override,
+                vehicle_info=vehicle_info_by_group.get(group_name),
+            )
             logistic_results[group_name] = {"status": "success", "path": logistic_path, "error": None}
         except (LogisticPlanError, Exception) as e:
             logistic_results[group_name] = {"status": "failed", "path": None, "error": str(e)}

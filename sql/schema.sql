@@ -343,6 +343,50 @@ END $$;
 ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS template_version_id INTEGER
     REFERENCES template_version(id);
 
+-- ---------- Vehicle / เลือกรถ (2025-09-12) ----------
+-- รายชื่อรถที่มีจริง (ทะเบียน + ความจุตะกร้า + ขนาด) — ให้ Admin จัดการผ่าน Django Admin ได้ตรงๆ
+-- ไม่ผูกกับ LogisticGroup เพราะรถคันเดียวใช้วิ่งกลุ่มไหนก็ได้ (เลือกอิสระต่อแผนแต่ละครั้ง)
+CREATE TABLE IF NOT EXISTS vehicle (
+    id              SERIAL PRIMARY KEY,
+    customer_id     INTEGER NOT NULL REFERENCES customer(id),
+    plate_number    VARCHAR(20) NOT NULL,
+    basket_capacity INTEGER NOT NULL,
+    vehicle_size    VARCHAR(30) NOT NULL,   -- เช่น "4ล้อ", "6ล้อใหญ่", "10ล้อ" — ใช้ group รถที่ขนาดเดียวกัน
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMP DEFAULT now(),
+    UNIQUE (customer_id, plate_number)
+);
+CREATE INDEX IF NOT EXISTS idx_vehicle_customer ON vehicle(customer_id);
+
+-- ข้อมูลรถจริง 8 คัน (จากไฟล์ "ความจุรถ-ตระกร้าเซเว่น.xlsx" — 2025-09-12) — ON CONFLICT DO NOTHING
+-- กันซ้ำถ้ารัน schema.sql ซ้ำ (Admin แก้ไข/เพิ่มรถเองทีหลังผ่าน Django Admin ได้ ไม่กระทบ seed ชุดนี้)
+DO $$
+DECLARE
+    cpall_id INTEGER;
+BEGIN
+    SELECT id INTO cpall_id FROM customer WHERE code = 'cpall';
+    IF cpall_id IS NOT NULL THEN
+        INSERT INTO vehicle (customer_id, plate_number, basket_capacity, vehicle_size)
+        VALUES
+            (cpall_id, '2ฒอ 2841', 138, '4ล้อ'),
+            (cpall_id, '2ฒอ 2847', 138, '4ล้อ'),
+            (cpall_id, 'ฌช2448', 230, '4ล้อ จัมโบ้'),
+            (cpall_id, '83-9382', 295, '6ล้อ เล็ก'),
+            (cpall_id, '83-8096', 525, '6ล้อใหญ่'),
+            (cpall_id, '83-7977', 525, '6ล้อใหญ่'),
+            (cpall_id, '83-8521', 872, '10ล้อ'),
+            (cpall_id, '83-8522', 872, '10ล้อ')
+        ON CONFLICT (customer_id, plate_number) DO NOTHING;
+    END IF;
+END $$;
+
+-- เลือกรถต่อ (แผน, กลุ่ม logistic) — ทุกช่องไม่บังคับเลย (Admin ไม่เลือกอะไรเลยก็ได้ ไฟล์จะไม่มี
+-- "ผู้ส่ง" เขียนทับ ปล่อยเป็นค่าเดิมจากเทมเพลต) vehicle_size แยกเก็บต่างหากจาก vehicle เพราะ Admin
+-- อาจจะเลือกแค่ "ขนาดรถ" (ที่ระบบแนะนำให้) โดยยังไม่รู้ทะเบียนจริง (คนละ workflow กับตอนรู้ทะเบียนแล้ว)
+ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS vehicle_size VARCHAR(30);
+ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS vehicle_id INTEGER REFERENCES vehicle(id);
+ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS driver_name VARCHAR(100);
+
 CREATE INDEX IF NOT EXISTS idx_plan_run_import_run ON plan_run_import(plan_run_id);
 CREATE INDEX IF NOT EXISTS idx_plan_run_logistic_run ON plan_run_logistic_file(plan_run_id);
 
@@ -518,6 +562,13 @@ ALTER TABLE logistic_group ENABLE ROW LEVEL SECURITY;
 ALTER TABLE logistic_group FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS customer_isolation ON logistic_group;
 CREATE POLICY customer_isolation ON logistic_group
+    USING (customer_id::text = current_setting('app.current_customer_id', true))
+    WITH CHECK (customer_id::text = current_setting('app.current_customer_id', true));
+
+ALTER TABLE vehicle ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vehicle FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS customer_isolation ON vehicle;
+CREATE POLICY customer_isolation ON vehicle
     USING (customer_id::text = current_setting('app.current_customer_id', true))
     WITH CHECK (customer_id::text = current_setting('app.current_customer_id', true));
 

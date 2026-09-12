@@ -88,12 +88,14 @@
             {% else %}
             <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-100 text-red-700 text-sm">✕</span>
             {% endif %}
-            <div>
+            <div class="flex-1">
                 <p class="text-sm font-medium text-stone-900">แพลนกระจาย — {{ lp.group_name }}</p>
                 {% if lp.status == 'skipped' %}
                 <p class="text-xs text-stone-400 mt-0.5">ยังไม่มีข้อมูลรอบนี้</p>
                 {% elif lp.status == 'failed' %}
                 <p class="text-xs text-red-600 mt-0.5">{{ lp.error_message }}</p>
+                {% elif lp.status == 'success' %}
+                {% include "cpall/_plan_vehicle.html" with plan_run_id=plan.id %}
                 {% endif %}
             </div>
         </div>

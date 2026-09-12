@@ -1,0 +1,51 @@
+<div id="plan-vehicle-{{ lp.group_name }}" class="mt-2" x-data="{ editing: false }">
+    <div class="flex items-center gap-2">
+        <p class="text-xs text-stone-500">
+            {% if lp.vehicle_size or lp.driver_name %}
+                🚚 {{ lp.vehicle_size|default:"" }}{% if lp.vehicle_plate %} — {{ lp.vehicle_plate }}{% endif %}{% if lp.driver_name %} ({{ lp.driver_name }}){% endif %}
+            {% elif lp.suggested_vehicle_size %}
+                <span class="text-stone-400">ยังไม่ได้เลือกรถ — แนะนำ {{ lp.suggested_vehicle_size }}</span>
+            {% else %}
+                <span class="text-stone-400">ยังไม่ได้เลือกรถ</span>
+            {% endif %}
+        </p>
+        <button type="button" @click="editing = !editing"
+                class="text-xs text-stone-500 hover:text-stone-700 underline"
+                x-text="editing ? 'ยกเลิก' : 'เลือกรถ'"></button>
+    </div>
+
+    <form x-show="editing" x-cloak
+          hx-post="{% url 'cpall:plan_vehicle_submit' plan_run_id lp.group_name %}"
+          hx-target="#plan-vehicle-{{ lp.group_name }}" hx-swap="outerHTML"
+          @htmx:after-request="editing = false"
+          class="mt-2 flex flex-wrap items-center gap-2">
+        {% csrf_token %}
+
+        <select name="vehicle_size" class="rounded-md border border-stone-300 text-xs px-2 py-1.5">
+            <option value="">-- ไม่ระบุขนาด --</option>
+            {% regroup vehicles by vehicle_size as size_groups %}
+            {% for g in size_groups %}
+            <option value="{{ g.grouper }}" {% if lp.vehicle_size == g.grouper %}selected{% endif %}>
+                {{ g.grouper }}{% if lp.suggested_vehicle_size == g.grouper %} (แนะนำ){% endif %}
+            </option>
+            {% endfor %}
+        </select>
+
+        <select name="vehicle_id" class="rounded-md border border-stone-300 text-xs px-2 py-1.5">
+            <option value="">-- ไม่ระบุทะเบียน --</option>
+            {% for v in vehicles %}
+            <option value="{{ v.id }}" {% if lp.vehicle_id == v.id %}selected{% endif %}>
+                {{ v.plate_number }} ({{ v.vehicle_size }})
+            </option>
+            {% endfor %}
+        </select>
+
+        <input type="text" name="driver_name" placeholder="ชื่อคนขับ (ถ้ามี)" value="{{ lp.driver_name|default:'' }}"
+               class="rounded-md border border-stone-300 text-xs px-2 py-1.5 w-32">
+
+        <button type="submit" hx-disabled-elt="this"
+                class="rounded-md bg-stone-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-900 transition disabled:opacity-70">
+            บันทึก
+        </button>
+    </form>
+</div>
