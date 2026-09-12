@@ -20,8 +20,10 @@ from datetime import datetime
 from customers.cpall.logic.db import get_cpall_customer_id
 from customers.cpall.logic.excel_export import ExcelExportError, export_production_plan
 from customers.cpall.logic.grouping import (
+    DuplicateSubLocationError,
     InactiveSkuOrderedError,
     ReconciliationError,
+    check_duplicate_sub_locations,
     check_inactive_skus_ordered,
     reconcile,
 )
@@ -31,10 +33,25 @@ from customers.cpall.logic.logistic_plan_export import (
     get_group_templates,
     group_has_data,
 )
-from customers.cpall.models import PlanRun, PlanRunLogisticFile
+from customers.cpall.logic.plan_view_data import suggest_vehicle_size
+from customers.cpall.models import LogisticGroup, PlanRun, PlanRunLogisticFile, PlanSkuResult
 
 
 def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_override: dict = None) -> dict:
+
+    duplicate_sub_locations = check_duplicate_sub_locations(po_import_ids)
+
+    if duplicate_sub_locations:
+        details = "; ".join(
+            f"{item['sub_location']} "
+            f"(PO Import {', '.join(map(str, item['po_import_ids']))})"
+            for item in duplicate_sub_locations
+        )
+
+        raise DuplicateSubLocationError(
+            f"สร้างแผนไม่สำเร็จ — จุดส่งย่อยซ้ำกันในหลายรอบ PO: {details}"
+        )
+    
     """
     รัน pipeline สร้างแผนทั้งหมด (reconcile -> Production Plan -> Logistic Plan 4 กลุ่ม)
     คืนค่าเป็น dict ล้วนๆ ไม่ print — ผู้เรียก (main.py / เว็บ) เอาไป format แสดงผลเอง
@@ -52,8 +69,9 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     if inactive_ordered:
         names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
         raise InactiveSkuOrderedError(
-            f"สร้างแผนไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names} — "
-            f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะสร้างแผนได้"
+            f"สร้างแผนไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names}"
+            # f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะสร้างแผนได้"
+            f"\nตรวจสอบ Template ว่ามีสินค้าเหล่านี้อยู่หรือไม่ (ถ้าไม่มี ให้เพิ่มใน Template ก่อน)"
         )
 
     # ---------- ตรวจสอบยอด ----------
@@ -61,7 +79,7 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     recon = reconcile(po_import_ids)  # raise ReconciliationError ถ้าไม่ผ่าน (ปล่อยให้ผู้เรียนจัดการ)
     if not recon["passed"]:
         raise ReconciliationError(
-            f"ยอดไม่ตรงกัน {len(recon['mismatches'])} SKU: "
+            f"ยอดไม่ตรงกัน {len(recon['mismatches'])} สินค้า: "
             + ", ".join(m["barcode"] for m in recon["mismatches"])
         )
 
@@ -75,7 +93,7 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     production_plan_result = {"status": "success", "path": production_plan_path, "error": None}
     try:
         export_production_plan(po_import_ids, production_plan_path, buffer_override=buffer_override)
-    except (ExcelExportError, Exception) as e:
+    except Exception as e:
         production_plan_result = {"status": "failed", "path": None, "error": str(e)}
 
     # ---------- Logistic Plan (แต่ละกลุ่ม อิสระต่อกัน) ----------
@@ -87,7 +105,7 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
 
         group_output_path = f"{output_dir}/{group_name}.xlsx"
         try:
-            export_logistic_plan(po_import_ids, group_name, group_output_path)
+            export_logistic_plan(po_import_ids, group_name, group_output_path,buffer_override=buffer_override,)
             logistic_results[group_name] = {"status": "success", "path": group_output_path, "error": None}
         except (LogisticPlanError, Exception) as e:
             logistic_results[group_name] = {"status": "failed", "path": None, "error": str(e)}
@@ -100,6 +118,8 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     # การสร้างแผนทั้งหมดล้มเหลว (ไฟล์ Excel สร้างสำเร็จแล้ว ยังใช้งานได้ปกติ แค่ตาราง data-first
     # จะไม่มีข้อมูลสำหรับแผนนี้ — log ไว้ให้เห็นชัดเจนแทนที่จะทำให้ทั้ง request ล้ม)
     extracted_ok = _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results)
+
+    _auto_suggest_missing_vehicles(plan_run_id, logistic_results)
 
     # ---------- ลบไฟล์ Excel ที่ extract ข้อมูลเข้า plan_sku_result สำเร็จแล้วทิ้ง (data-first เต็มรูป
     # แบบ) — เว็บอ่านจาก DB อยู่แล้ว ดาวน์โหลดก็ regenerate จาก DB+เทมเพลตใหม่ทุกครั้งอยู่แล้ว ไฟล์ที่
@@ -163,6 +183,33 @@ def _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_
         print(f"[plan_runner] บันทึกผลลัพธ์ลง plan_sku_result แล้ว {len(all_rows)} แถว (plan_run_id={plan_run_id})")
 
     return extracted_ok
+
+
+def _auto_suggest_missing_vehicles(plan_run_id, logistic_results):
+    """
+    แนะนำขนาดรถอัตโนมัติเฉพาะกลุ่มที่ "ยังไม่เคยมีค่า" (เลือกรถ feature — 2025-09-12, แก้บั๊ก 2025-09-12)
+
+    ใช้กฎเดียว "เติมเฉพาะช่องว่าง ไม่ทับของเดิม" ครอบคลุมทั้ง 2 สถานการณ์ในฟังก์ชันเดียว:
+      - สร้างแผนใหม่ (run_plan): ทุกกลุ่มยังไม่มีค่าเลย -> แนะนำหมดทุกกลุ่ม
+      - Recalculate (Add PO/แก้ยอดเผื่อ): กลุ่มที่มีค่าอยู่แล้ว (Admin เคยเลือกเอง) -> ข้ามไป ไม่ทับ
+        แต่กลุ่มที่ "เพิ่งมีข้อมูลครั้งแรก" (เพิ่งเปลี่ยนจาก skipped/failed -> success เพราะเพิ่ง Add PO
+        เข้ามาให้กลุ่มนั้น) ยังไม่เคยมีค่าเหมือนกัน -> ต้องได้รับการแนะนำเหมือนตอนสร้างแผนใหม่
+
+    *** เจอบั๊กจริง (2025-09-12) ***: เดิม auto-suggest ทำงานแค่ใน run_plan() เท่านั้น (ตั้งใจไม่ทำใน
+    edit_buffer_and_regenerate() เพื่อกันทับค่าที่ Admin เลือกเอง) แต่ผลคือกลุ่มที่เพิ่งมีข้อมูลครั้งแรก
+    จากการ Add PO (เช่น เอารอบบ่ายไปก่อน แล้วเพิ่มรอบเช้าทีหลัง — "รอบเช้าต่างจังหวัด" เพิ่งมีข้อมูล
+    ตอนนั้นเป็นครั้งแรก) ไม่เคยได้รับการแนะนำเลย ค้างเป็น None ตลอดไป ต้อง Admin เข้าไปเลือกเองเท่านั้น
+    """
+    for group_name, result in logistic_results.items():
+        if result["status"] != "success":
+            continue
+        lf = PlanRunLogisticFile.objects.filter(plan_run_id=plan_run_id, group_name=group_name).first()
+        if lf is None or lf.vehicle_size:
+            continue  # มีค่าอยู่แล้ว (Admin เคยเลือกเอง หรือเคยแนะนำไปแล้ว) — ไม่ทับ
+        suggested_size, _ = suggest_vehicle_size(plan_run_id, group_name)
+        if suggested_size:
+            lf.vehicle_size = suggested_size
+            lf.save(update_fields=["vehicle_size"])
 
 
 def _save_plan_run(po_import_ids, output_dir, production_plan_result, logistic_results) -> int:
@@ -250,6 +297,32 @@ def list_plan_runs(limit: int = 50) -> list[dict]:
     ]
 
 
+def _build_logistic_plan_summary(plan_run_id: int, lf) -> dict:
+    """
+    เตรียมข้อมูล 1 กลุ่ม logistic สำหรับหน้าแผน รวมคำแนะนำขนาดรถ + ยอดตะกร้ารวม + ข้อความเตือนถ้ายอด
+    เกินความจุรถที่ใหญ่ที่สุดที่มี (เลือกรถ feature ต่อยอด — 2026-09-12)
+
+    total_basket โชว์เสมอ (ไม่ใช่แค่ตอน overflow) — Admin ขอให้เห็นยอดตะกร้าไวๆ ตรงหน้าแผนเลย ไม่ต้อง
+    เปิดตารางดู (2026-09-12)
+    """
+    summary = {
+        "group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
+        "error_message": lf.error_message,
+        "vehicle_size": lf.vehicle_size, "vehicle_id": lf.vehicle_id,
+        "vehicle_plate": lf.vehicle.plate_number if lf.vehicle else None,
+        "driver_name": lf.driver_name,
+        "suggested_vehicle_size": None, "capacity_overflow_basket": None, "total_basket": None,
+    }
+    if lf.status == "success":
+        suggested_size, total_basket = suggest_vehicle_size(plan_run_id, lf.group_name)
+        summary["suggested_vehicle_size"] = suggested_size
+        summary["total_basket"] = total_basket
+        if suggested_size is None:
+            # ไม่มีรถคันไหนในระบบจุพอเลย (ไม่ใช่แค่ "ยังไม่ได้ตั้งค่า") — เก็บยอดจริงไว้บอก Admin ตรงๆ
+            summary["capacity_overflow_basket"] = total_basket
+    return summary
+
+
 def get_plan_run_detail(plan_run_id: int) -> dict | None:
     """ดึงรายละเอียดแผนที่สร้างไว้ 1 รายการ (ใช้แสดงหน้า ดูแผน)"""
     try:
@@ -262,6 +335,7 @@ def get_plan_run_detail(plan_run_id: int) -> dict | None:
         "production_plan_path": plan_run.production_plan_path,
         "production_plan_status": plan_run.production_plan_status,
         "production_plan_error": plan_run.production_plan_error,
+        "note": plan_run.note,
     }
     result["po_imports"] = [
         {"id": pi.id, "source_filename": pi.source_filename,
@@ -269,11 +343,18 @@ def get_plan_run_detail(plan_run_id: int) -> dict | None:
          "po_date": pi.po_date}
         for pi in plan_run.po_imports.all()
     ]
-    result["logistic_plans"] = [
-        {"group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
-         "error_message": lf.error_message}
-        for lf in plan_run.logistic_files.order_by("group_name")
-    ]
+    display_orders = dict(
+        LogisticGroup.objects.filter(is_active=True)
+        .values_list("group_name", "display_order")
+    )
+
+    result["logistic_plans"] = sorted(
+        [
+            _build_logistic_plan_summary(plan_run_id, lf)
+            for lf in plan_run.logistic_files.all()
+        ],
+        key=lambda x: (display_orders.get(x["group_name"], 9999), x["group_name"]),
+    )
     return result
 
 
@@ -324,8 +405,9 @@ def edit_buffer_and_regenerate(plan_run_id: int, buffer_override: dict) -> dict:
     if inactive_ordered:
         names = ", ".join(f"{s['barcode']} ({s['name_th']})" for s in inactive_ordered)
         raise InactiveSkuOrderedError(
-            f"แก้ยอดเผื่อไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names} — "
-            f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะแก้ไขต่อได้"
+            f"แก้ยอดเผื่อไม่สำเร็จ — PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งานอยู่: {names}"
+            # f"ไปเปิดใช้งาน (is_active) สินค้านี้ก่อนใน Django Admin ถึงจะแก้ไขต่อได้"
+            f"\nตรวจสอบ Template ว่ามีสินค้าเหล่านี้อยู่หรือไม่ (ถ้าไม่มี ให้เพิ่มใน Template ก่อน)",
         )
 
     output_dir = plan_run.output_dir or f"customers/cpall/data/output/{datetime.now().strftime('%Y%m%d_%H%M')}"
@@ -339,20 +421,57 @@ def edit_buffer_and_regenerate(plan_run_id: int, buffer_override: dict) -> dict:
         production_plan_result = {"status": "failed", "path": None, "error": str(e)}
 
     logistic_results = {}
+    # ดึงข้อมูลรถที่เคยเลือกไว้มาส่งต่อ (เลือกรถ feature — 2025-09-12) — ไม่งั้นจะหายทุกครั้งที่
+    # recalculate (แก้ยอดเผื่อ/Add PO) เพราะฟังก์ชันนี้สร้างไฟล์ใหม่ทับของเดิมเสมอ ต้องอ่านค่าที่บันทึก
+    # ไว้ใน DB มาใส่คืนให้ ไม่ใช่ปล่อยว่างจนข้อมูลที่ Admin เลือกไว้หายไปเงียบๆ
+    vehicle_info_by_group = {
+        lf.group_name: {
+            "vehicle_size": lf.vehicle_size,
+            "vehicle_plate": lf.vehicle.plate_number if lf.vehicle else None,
+            "driver_name": lf.driver_name,
+        }
+        for lf in PlanRunLogisticFile.objects.filter(plan_run_id=plan_run_id).select_related("vehicle")
+    }
     for group_name in get_group_templates():
         if not group_has_data(po_import_ids, group_name):
             logistic_results[group_name] = {"status": "skipped", "path": None, "error": None}
             continue
         logistic_path = f"{output_dir}/{group_name}.xlsx"
         try:
-            export_logistic_plan(po_import_ids, group_name, logistic_path)
+            export_logistic_plan(
+                po_import_ids, group_name, logistic_path, buffer_override=buffer_override,
+                vehicle_info=vehicle_info_by_group.get(group_name),
+            )
             logistic_results[group_name] = {"status": "success", "path": logistic_path, "error": None}
         except (LogisticPlanError, Exception) as e:
             logistic_results[group_name] = {"status": "failed", "path": None, "error": str(e)}
 
     # ลบผลลัพธ์เก่าของแผนนี้ทิ้งก่อนเสมอ (bulk_create ด้านล่างไม่ใช่ update — ถ้าไม่ลบก่อนจะได้แถวซ้ำ)
     PlanSkuResult.objects.filter(plan_run_id=plan_run_id).delete()
-    extracted_ok = _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results)
+    extracted_ok = _extract_and_save_sku_results(
+        plan_run_id,
+        production_plan_result,
+        logistic_results,
+    )
+
+    # Add PO / Recalculate ใช้ PlanRun เดิม
+    # จึงต้อง sync สถานะ Logistic ล่าสุดกลับเข้า PlanRunLogisticFile
+    for group_name, result in logistic_results.items():
+        PlanRunLogisticFile.objects.filter(
+            plan_run_id=plan_run_id,
+            group_name=group_name,
+        ).update(
+            status=result["status"],
+            file_path=result["path"],
+            error_message=result["error"],
+        )
+
+    # แนะนำขนาดรถให้กลุ่มที่ "เพิ่งมีข้อมูลครั้งแรก" จากการ Add PO รอบนี้ (แก้บั๊ก 2025-09-12 — ดู
+    # docstring ของ _auto_suggest_missing_vehicles) — กลุ่มที่มีค่าอยู่แล้ว (Admin เคยเลือกเอง) จะไม่
+    # ถูกแตะเลย เพราะฟังก์ชันนี้เติมแค่ช่องว่างเท่านั้น ไฟล์ Excel ที่ export ไปแล้วด้านบนไม่ต้องกังวล
+    # เรื่อง timing เลย เพราะถูกลบทิ้งเป็นไฟล์ชั่วคราวอยู่ดี (ดูโค้ดด้านล่าง) — ตอน Admin กดดาวน์โหลด
+    # จริงจะ regenerate จาก DB สดใหม่เสมอ (regenerate_logistic_plan_bytes) ได้ค่าล่าสุดถูกต้องแน่นอน
+    _auto_suggest_missing_vehicles(plan_run_id, logistic_results)
 
     if "production" in extracted_ok and production_plan_result["path"] and os.path.exists(production_plan_result["path"]):
         os.remove(production_plan_result["path"])

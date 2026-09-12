@@ -1,324 +1,995 @@
-# แพลนผลิต 7-11 — Django, โครงสร้างแบบ "1 ลูกค้า = 1 โมดูล"
+# PO-to-PrdLogis-Plan
 
-> ตัดสินใจใช้ Django ต่อจาก POC เปรียบเทียบ Flask/Django — เหตุผลหลัก: ต้องรองรับหลายลูกค้าในอนาคต
-> + ต้องมีระบบสิทธิ์ผู้ใช้งาน ซึ่ง Django มี Admin + Auth/Permission ในตัวพร้อมใช้
+ระบบจัดทำ **แพลนผลิต (Production Plan)** และ **แพลนกระจาย (Logistic Plan)** จากข้อมูล PO สำหรับงาน 7-11 / CP All
+
+ระบบถูกออกแบบมาเพื่อ **ช่วย Workflow การทำงานที่มีอยู่จริง** ไม่ได้มีเป้าหมายให้ผู้ใช้งานต้องเปลี่ยนวิธีทำงานเพียงเพราะข้อจำกัดของระบบ
+
+> **แนวคิดหลัก**
 >
-> รื้อโครงสร้างรอบใหญ่เพื่อรองรับหลายลูกค้าจริงจัง: แยกโค้ดเป็น "1 ลูกค้า = 1 Django app" (ตอนนี้มีแค่
-> `cpall` = CP All/7-11) ผ่าน Portal ที่เลือกลูกค้าได้ + Postgres Row-Level Security (RLS) กันข้อมูลรั่ว
-> ข้ามลูกค้าที่ระดับฐานข้อมูลเอง (ไม่ใช่แค่พึ่งโค้ดฝั่งแอปอย่างเดียว)
+> ระบบควรปรับเข้าหา Workflow ของผู้ใช้งาน
+> ไม่ใช่บังคับให้ผู้ใช้งานปรับ Workflow เข้าหาระบบ
+>
+> ระบบควรบังคับเฉพาะสิ่งที่จำเป็นต่อ Business Rule และ Data Integrity
 
-## สถาปัตยกรรม
+---
 
+## 1. เป้าหมายของระบบ
+
+กระบวนการเดิมอาศัย PO และ Excel Template เป็นหลัก โดยผู้ใช้งานต้องจัดข้อมูล คำนวณ และเตรียมไฟล์สำหรับฝ่าย Production / Logistic ด้วยตนเอง
+
+ระบบนี้เข้ามาช่วยในส่วนที่เหมาะกับการทำเป็นระบบ เช่น
+
+* นำเข้า PO
+* จัดการข้อมูล PO
+* ตรวจสอบข้อมูลที่จำเป็น
+* จัดการ Location / Sub-location
+* คำนวณแพลน
+* กำหนดและแก้ไขยอดเผื่อ
+* สร้าง Production Plan
+* สร้าง Logistic Plan
+* แสดงผลบน Web
+* สร้าง Excel จาก Template
+* เก็บข้อมูลใน Database เพื่อให้สามารถสร้างไฟล์ใหม่ภายหลังได้
+
+ขณะเดียวกัน **Excel ยังคงเป็นเครื่องมือทำงานของผู้ใช้งาน**
+
+ไฟล์ที่ระบบสร้างจึงต้องยังคง:
+
+* รูปแบบ Template
+* Formula
+* Layout
+* Header
+* Merged Cells
+* ข้อมูลที่ผู้ใช้งานต้องแก้ไขต่อใน Excel
+
+---
+
+# 2. Business Flow
+
+## 2.1 Import PO
+
+ผู้ใช้งานสามารถนำเข้า PO เข้าระบบก่อน แล้วนำ PO ที่ Import แล้วไปใช้สร้าง Plan ภายหลังได้
+
+```text
+Import PO
+   ↓
+ตรวจสอบข้อมูล
+   ↓
+Resolve Location / Product ตามที่จำเป็น
+   ↓
+PO พร้อมสำหรับสร้าง Plan
 ```
-core/            ของกลาง ใช้ร่วมกันทุกลูกค้า
-  db.py            connection helper — แยก 2 แบบชัดเจน:
-                     get_connection(customer_id=..) = role จำกัดสิทธิ์ ใช้งานจริง โดน RLS บังคับ
-                     get_admin_connection()          = superuser ใช้แค่ตอนรัน schema.sql เท่านั้น
-  models.py        Customer (ตารางกลาง ไม่มี RLS เพราะไม่ใช่ข้อมูลอ่อนไหว)
 
-portal/          หน้าแรกสุด (/) — ภาพรวมทุกลูกค้า + ปุ่มเข้าแต่ละเจ้า
+ระบบเก็บข้อมูล PO ลง Database เป็นหลัก
 
-customers/cpall/ โมดูลของลูกค้า CP All (7-11) ทั้งหมด — ตัวอย่าง/ต้นแบบสำหรับลูกค้าเจ้าถัดไป
-  logic/           business logic ล้วนๆ (ไม่ใช่ Django-specific) — ใช้ Django ORM เป็นหลัก (grouping.py
-                     เป็นข้อยกเว้นที่ตั้งใจใช้ raw SQL ต่อ เพราะเป็น query รวม/JOIN ที่ซับซ้อน)
-    db.py            resolve customer_id ของ cpall อัตโนมัติ แล้วส่งต่อให้ core.db
-    po_parser.py, po_regenerator.py, po_view_data.py, grouping.py, excel_export.py,
-    logistic_plan_export.py, plan_runner.py, plan_regenerator.py, plan_result_extractor.py,
-    plan_view_data.py, template_manager.py, location_mapping_manager.py, product_master_manager.py,
-    config_loader.py, date_utils.py
-  models.py        Django ORM model ทั้งหมด (ProductMaster, LocationMapping, LogisticGroup, PoImport,
-                     PoLine, PlanRun, TemplateVersion, PlanSkuResult ฯลฯ) — ORM เต็มรูปแบบ ไม่ใช่แค่
-                     สำหรับ Django Admin อีกต่อไป
-  management/commands/  clear_po_and_plan_data.py (ล้างข้อมูล PO/แผนทั้งหมด — ถามยืนยันก่อนเสมอ),
-                     dev_reset_po_and_plan_id_sequences.py ([DEV เท่านั้น] รีเซ็ตตัวนับ id กลับไปเริ่มที่
-                     1 — แยกไฟล์ต่างหากจากคำสั่งล้างข้อมูลตั้งใจ กันสับสนกับ workflow ปกติ),
-                     sync_cpall_config.py (sync ProductMaster/LocationMapping จาก YAML เข้า DB)
-  views.py, urls.py, admin.py
-  templates/cpall/
-  config/          sku_master.yaml, location_mapping.yaml (เฉพาะ cpall — ชื่อไฟล์ YAML ยังคงเดิม แม้
-                     ตาราง DB จะเปลี่ยนชื่อเป็น product_master แล้วก็ตาม ไม่ได้ rename ไฟล์ตาม)
-  excel_templates/ ไฟล์ Template Excel ของ Production Plan + Logistic Plan ทุกกลุ่มพื้นที่ (จำนวนไฟล์
-                     ไม่คงที่ — ขึ้นกับจำนวนกลุ่มพื้นที่ที่ตั้งค่าไว้ผ่าน Django Admin ดูหัวข้อ
-                     "กลุ่มพื้นที่ Logistic Plan" ด้านล่าง)
-  data/            po_uploads/, output/ (เฉพาะ cpall — ปกติว่างเปล่าเสมอแล้ว เพราะระบบเป็น data-first
-                     เต็มรูปแบบ มีไว้แค่รองรับ PO/แผนเก่าก่อนอัปเดต data-first ที่อาจยังมีไฟล์ค้างอยู่)
+ไฟล์ต้นฉบับไม่ได้ถูกใช้เป็น Database และไฟล์ชั่วคราวสามารถถูกลบหลังจากนำเข้าข้อมูลแล้ว
 
-sql/schema.sql   ตาราง Postgres ทั้งหมด (core + cpall) + RLS policy + app_role + migration (idempotent
-                   รันซ้ำได้เสมอ — รองรับทั้ง fresh install และอัปเกรดจากฐานข้อมูลเก่าทุกเวอร์ชัน —
-                   ดูหัวข้อ "ข้อควรระวังเรื่อง migration order" ก่อนแก้ไฟล์นี้ต่อ)
-webproject/      Django project settings/urls
+---
+
+## 2.2 Create Plan
+
+ระบบรองรับการสร้าง Plan ได้ 2 รูปแบบ
+
+### แบบที่ 1 — Import PO ระหว่างสร้าง Plan
+
+```text
+สร้างแผน
+   ↓
+นำเข้า PO
+   ↓
+ตรวจสอบข้อมูล
+   ↓
+กำหนดยอดเผื่อ
+   ↓
+คำนวณ
+   ↓
+Production Plan
++
+Logistic Plan
 ```
 
-## Row-Level Security (RLS) — ทำไมต้องมี 2 role
+### แบบที่ 2 — ใช้ PO ที่ Import ไว้แล้ว
 
-**`app_role`** (ไม่ใช่ superuser) คือ role ที่แอปใช้เชื่อมต่อจริงตอนรันงาน — Postgres จะบังคับ RLS
-กับ role นี้จริง (กรองให้เห็นแค่ข้อมูลของ `customer_id` ที่ session ตั้งไว้เท่านั้น แม้โค้ดจะลืม
-`WHERE customer_id = ...` เอง ก็ยังปลอดภัย)
-
-**`postgres`** (superuser) ใช้ได้แค่ตอนรัน `sql/schema.sql`/`migrate` เท่านั้น — **ห้ามใช้ query ข้อมูล
-ทั่วไปเด็ดขาด** เพราะ Postgres ไม่บังคับ RLS กับ superuser ไม่ว่าจะตั้ง `FORCE ROW LEVEL SECURITY`
-หรือไม่ก็ตาม (พิสูจน์เจอบั๊กนี้จริงระหว่างพัฒนา — ตอนแรกลืมจุดนี้ RLS เลยไม่มีผลอะไรเลย)
-
-## สถานะปัจจุบัน
-
-**เสร็จแล้ว:**
-- Portal (`/`) — ภาพรวมลูกค้าทั้งหมด, cpall Dashboard (`/cpall/`) — ครบทุกฟีเจอร์
-- นำเข้า PO — เก็บทุกคอลัมน์ของไฟล์ต้นฉบับลง database ครบ (ไม่ใช่แค่ 12 คอลัมน์ที่ใช้คำนวณ) แล้ว
-  **ลบไฟล์ต้นฉบับทิ้งทันที** (data-first) — ดู/ดาวน์โหลดย้อนหลังสร้างไฟล์ใหม่จาก database ตรงกับ
-  ต้นฉบับทุกเซลล์ (ทดสอบเทียบแล้ว)
-- **PO เป็น Source of Truth เต็มรูปแบบ — ไม่มี auto-dedupe อีกต่อไป** (เปลี่ยน business rule แล้ว) —
-  ถ้าเจอแถวที่ซ้ำกันเป๊ะ (po_number+fc_code+barcode+line_no) หยุดที่หน้ายืนยันก่อน แสดงรายละเอียดครบ
-  ให้ Admin เลือกเอง **ดำเนินการต่อ** (import ทุกแถวจริง ไม่ตัดอะไรออกเลย) หรือ **ยกเลิก** (ไม่ import
-  อะไรเลย ลบไฟล์ทิ้ง) — potential duplicate (PO+จุดส่ง+SKU เดียวกัน แต่ line_no ต่างกัน) ยังไม่มี
-  business rule ยืนยันจาก Admin แค่ log ไว้ดูเอง ไม่ block ไม่ทำอะไรกับแถวเหล่านั้นเลย
-- เลือก location mapping ผ่านเว็บเมื่อเจอรหัสสถานที่ใหม่ (บังคับกรอกก่อนไปต่อ — มีผลจริงต่อการคำนวณ)
-  + เพิ่มข้อมูลสินค้าใหม่ผ่านเว็บเมื่อเจอบาร์โค้ดที่ยังไม่รู้จัก (ไม่บังคับ กดข้ามได้ — ไม่มีผลต่อการ
-  คำนวณแผนเลย แค่ทำให้ชื่อสินค้าแสดงถูกต้องตอนกรอกยอดเผื่อ) — ดึงชื่อ/ราคาจาก PO มา auto-fill ให้เลย
-  ถ้ามี (แก้ได้ก่อนกด บันทึก — ไม่บันทึกอัตโนมัติ) บันทึกทั้ง DB + YAML เหมือนกันทั้งคู่
-- **กรอกยอดเผื่อผ่านเว็บทุกครั้งที่สร้างแผน** (ไม่ใช่แค่ตอนมีรอบเช้าต่างจังหวัดอีกต่อไป) — ครบ 19 SKU
-  ตามลำดับใน Production Plan จริง (เดิมดึงจากเทมเพลตรอบเช้า มีแค่ 18 ตัว) — ค่าเริ่มต้นดึงจาก
-  ยอดเผื่อล่าสุดที่เคยบันทึกไว้จริงในระบบ (ไม่ใช่ค่าเก่าที่ติดมากับไฟล์เทมเพลตอีกต่อไป) — **แก้ยอดเผื่อ
-  ของแผนที่สร้างไปแล้วได้** ผ่านปุ่ม "แก้ไขยอดเผื่อ" ที่หน้าดูแผน คำนวณใหม่ทั้งหมดทันที ใช้ `plan_run_id`
-  เดิม ไม่สร้างแผนใหม่ซ้อน (ไม่เปลี่ยน template_version ที่ผูกไว้ตอนสร้างครั้งแรกด้วย)
-- สร้างแผน (Production Plan + Logistic Plan ทุกกลุ่ม) ตรงกับไฟล์จริงของ Admin 100% — **ไฟล์ Excel ที่
-  สร้างตอนแผนสำเร็จถูกลบทิ้งทันที** (data-first เต็มรูปแบบ) เว็บอ่านจาก database ล้วนๆ ดาวน์โหลด
-  regenerate จากเทมเพลต+database สดทุกครั้ง (มีสูตรจริงในไฟล์ที่ได้เสมอ)
-  - หัวไฟล์ Production Plan ("วันที่ผลิต ... ส่งวันที่ PO ...") อัปเดตอัตโนมัติตามวันที่ของรอบบ่าย
-    เสมอ (ยืนยันกับ Admin แล้วว่ารอบเช้าต่างจังหวัดมาถึงวันเดียวกับวันที่ PO ของรอบบ่ายพอดี — ถ้าเลือก
-    แค่รอบเช้าอย่างเดียวไม่มีรอบบ่าย จะ fallback ไปใช้วันที่ของรอบเช้าแทน) — แก้ครบทั้งจุดสร้างแผนครั้ง
-    แรกและจุด regenerate/ดาวน์โหลดซ้ำแล้ว (เคยมีบั๊กที่ถูกต้องแค่ตอนสร้างครั้งแรก ผิดทุกครั้งที่ดาวน์โหลด
-    ซ้ำทีหลัง เพราะ M5 บังเอิญเป็น merged cell ที่ทับกับคอลัมน์ "ขอนแก่น" พอดี)
-  - **สินค้าที่ปิดใช้งาน (`is_active=False`) แต่ PO รอบนี้ยังสั่งอยู่จริง → block ตั้งแต่กดปุ่ม "สร้างแผน"
-    เลย** ไม่ต้องเสียเวลากรอกยอดเผื่อครบ 19 SKU ก่อนแล้วมารู้ทีหลังว่าสร้างไม่ได้ (เช็คซ้ำอีกชั้นตอน
-    submit ยอดเผื่อ และตอนแก้ไขยอดเผื่อทีหลังด้วย เผื่อ SKU เพิ่งถูกปิดใช้งานระหว่างเปิดหน้าค้างไว้) —
-    ถ้าปิดใช้งานและไม่มี PO สั่งเลยในรอบนี้ แต่เทมเพลตยังมีแถวอยู่ จะ**ซ่อนแถวนั้นไว้** (ไม่ลบแถวจริง
-    กันสูตรที่ reference row number อื่นในเทมเพลตพัง)
-  - **แจ้งเตือน (ไม่บล็อก) ถ้ามี SKU ที่ไม่มีคำสั่งซื้อเลยในรอบนี้** — banner ที่หน้าดูแผน แยกให้เห็นว่า
-    SKU ไหนยัง active อยู่ (แค่ไม่ได้ถูกสั่งรอบนี้) กับ SKU ไหน inactive (ซ่อนแถวไปแล้ว) — ธุรกิจยังไม่มี
-    business rule ตายตัวว่าควรทำยังไงกับ SKU เหล่านี้ (0/ซ่อน/ต้อง active ก่อน) แค่ให้ Admin เห็นก่อน
-    ดาวน์โหลดไปใช้จริงเฉยๆ
-  - ถ้าบางกลุ่ม (เช่น Logistic Plan กลุ่มหนึ่ง) สร้างไม่สำเร็จ แต่กลุ่มอื่นสำเร็จ — หน้าดูตาราง/ดาวน์โหลด
-    ของกลุ่มที่ไม่สำเร็จแสดง**ข้อความ error จริงที่บอกสาเหตุและวิธีแก้** (เดิม 404 เปล่าไม่รู้สาเหตุเลย)
-    และ ZIP ทั้งแผนก็มีไฟล์ `.txt` แจ้งรายชื่อ+สาเหตุของไฟล์ที่ขาดหายไปด้วย (เดิมข้ามไปเงียบๆ ไม่รู้ตัว)
-- โหลดทั้งแผนเป็น ZIP เดียว (Production + Logistic ทุกกลุ่มที่สำเร็จ)
-- ดูตารางตัวเลขในเว็บ พร้อม tooltip เลข PO จริงเบื้องหลัง "PO1"/"PO2" (ครบทุกจุดส่ง รวมจุดที่มี PO
-  เดียวด้วย — เดิมมีบั๊กที่ label สร้างไม่ตรงกันทำให้บางจุดไม่มี tooltip แก้แล้ว), แถวรวมยอดตะกร้า
-  ท้ายตาราง**ทั้งยอดรวมทั้งหมดและแยกต่อคอลัมน์ (จุดส่ง x PO)** ตรงกับสูตร Excel จริง (ทดสอบเทียบผ่าน
-  LibreOffice แล้ว — ตั้งใจแสดงเป็นค่าบวกทั้งคู่ ไม่ใส่เครื่องหมายลบตามสูตร Excel ดิบเพื่อไม่ให้สับสน),
-  ปุ่มขยายเต็มจอ (ใช้ CSS overlay ไม่ใช่ Fullscreen API — รองรับ iPad/iOS Safari ที่ไม่รองรับ
-  Fullscreen API กับ element ทั่วไป), ปัดนิ้วเลื่อนตารางได้เองอยู่แล้ว (native browser behavior)
-- จัดการ Template (ดาวน์โหลด/อัปโหลดแทนที่ พร้อม validate โครงสร้าง + เก็บทุกเวอร์ชันไว้ถาวร กู้คืนได้)
-- กลุ่มพื้นที่ Logistic Plan ตั้งค่าได้ผ่าน Django Admin โดยตรง (`/admin/cpall/logisticgroup/`)
-  — เพิ่มกลุ่มที่ 5 ขึ้นไปได้เลยไม่ต้องแก้โค้ด/deploy ใหม่ (เดิม hardcode เป็น `GROUP_TEMPLATES` dict)
-- ลบ PO / ลบแผน (กันลบ PO ที่ถูกใช้สร้างแผนไปแล้ว ต้องลบแผนก่อน — ข้อความ error บอกชื่อแผนที่ใช้อยู่
-  ชัดเจน — ไม่มีปุ่ม "บังคับลบ" แล้ว เพราะ PO เป็น data-first ไม่มีไฟล์ให้หายอีกต่อไป) — ล้าง checkbox
-  PO ที่เคยติ๊กไว้อัตโนมัติทุกครั้งที่กลับมาหน้ารายการ PO (รวมกด back/forward)
-- HTMX ทั่วทั้งเว็บ — action ต่างๆ (ลบ/สร้างแผน/อัปโหลด) ไม่ reload ทั้งหน้า มี loading overlay กลางจอ
-  ระหว่างรอ (หน่วง 250ms ก่อนโชว์ กัน action เร็วๆ กระพริบจอโดยไม่จำเป็น)
-- Django Admin จัดการ ProductMaster (เดิมชื่อ SkuMaster/sku_master ในโค้ดและ DB — เปลี่ยนให้ตรงกับ UI
-  "รหัสสินค้า/Product Code" แล้วทั้งคู่)/Location/Customer/กลุ่มพื้นที่ — ใช้ surrogate key (`id`) แทน
-  composite PK เดิมแล้ว (แก้ปัญหา Django Admin ลงทะเบียน composite PK model ไม่ได้) ProductMaster และ
-  LocationMapping มีสถานะ "เปิดใช้งาน" (`is_active`) ให้ปิดใช้งานได้โดยไม่ต้องลบทิ้ง
-- Kubi admin theme ปรับแต่งแล้ว (โลโก้, ลิงก์กลับ Portal, ปุ่มบันทึกเหลือชุดเดียว ไม่มีปุ่มลอยซ้ำ)
-- **เข้าจากเครื่องอื่นใน network เดียวกันได้ (LAN access)** — ต้อง rebuild dev container ครั้งเดียว
-  (เพิ่ม port mapping 8000:8000 ใน `docker-compose.yml`) แล้วรัน `runserver 0.0.0.0:8000` ดูหัวข้อ
-  "วิธีตั้งค่า" ด้านล่าง
-- UI ใช้คำภาษาไทยครบสม่ำเสมอแล้ว (แพลนผลิต/แพลนกระจาย/หน้าหลัก — ไม่มีคำอังกฤษหลงเหลือในหน้าที่ user
-  เห็นแล้ว ยกเว้น code comment ที่ไม่กระทบ)
-
-**Note ไว้ก่อน (รู้วิธีทำแล้ว แต่ยังไม่ได้ลงมือ — งานใหญ่ ต้องวางแผนก่อนลงมือ):**
-- [ ] **แสดงตารางเว็บให้ครบตาม range จริงในเทมเพลต** — user ระบุ range ที่ต้องแสดงครบต่อ sheet:
-  Production Plan `C5:S86`, บางบัวทอง `B3:N50`, รอบเช้าต่างจังหวัด `B10:T51`, มหาชัย `B4:H46`,
-  สุวรรณภูมิ `C2:R45` — ต้องรองรับการขยาย range เมื่อ PO/SKU เพิ่มด้วย (ไม่ hardcode ตัวเลขไว้ตายตัว)
-  บรรทัดแรกๆ ที่ user ให้มา (เช่น "ผู้ส่ง: 6 ล้อ..., ผู้ขับ") อาจจะดึงมาแสดงแค่หัวตารางก็พอ ไม่ต้องยก
-  มาทั้งหมด — งานนี้ใหญ่ ต้องเช็คทุก template ว่า range ตรงกับที่ระบบสแกนไว้จริงไหมก่อนลงมือ
-
-**ยังไม่ได้ทำ (งานใหญ่ รอ Admin/ข้อมูลเพิ่ม):**
-- [ ] **แพลนรถ/box-fill** — งานถัดไปหลังไม่เจอบั๊กแล้ว พบว่าไฟล์เทมเพลตมีชีต "คันที่ 1"/"คันที่ 2" ที่
-  Admin เคยกรอกด้วยมือไว้ครั้งหนึ่ง (ตัวเลข hardcode ไม่มีสูตรเชื่อมจากชีตอื่นเลย ไม่มีสูตรคำนวณอัตโนมัติ
-  ในการแบ่งรถ) ยืนยันได้ว่า 1 คันไม่จำเป็นต้องไปทุกจุดส่ง แต่ยังไม่รู้เกณฑ์การแบ่ง/ความจุรถ ต้องถาม
-  Admin ก่อน (ดูรายการคำถามท้ายไฟล์นี้)
-- [ ] ระบบสิทธิ์ผู้ใช้งาน (role/permission) — โครงสร้างโมดูล+RLS รองรับได้เลยตอนถึงเวลาทำจริง
-- [ ] ระบบ Log/Audit trail ฝั่งเว็บหลัก (cpall) — ยังไม่มีเลยสักจุด (ต้องรอระบบสิทธิ์ก่อน เพื่อให้รู้ว่า
-      "ใคร" ทำ) — ที่มีอยู่ตอนนี้คือ History ของ Django Admin เอง (built-in ไม่ได้เขียนเพิ่ม) ซึ่งบันทึก
-      เฉพาะการกระทำผ่าน `/admin/` เท่านั้น ไม่ครอบคลุมฝั่งเว็บหลักที่ User จริงใช้งาน
-- [ ] `main.py` (CLI) ไม่มีในเวอร์ชัน Django แล้ว (ใช้ผ่านเว็บทั้งหมด)
-
-**ตัดสินใจไม่ทำ (คุยกันแล้ว ไม่ใช่แค่ยังไม่ได้ทำ):**
-- ตรวจจับ "อัปโหลดไฟล์ PO เดิมซ้ำคนละรอบ" — reconcile ที่มีอยู่แล้วช่วยกันได้ระดับหนึ่ง ไม่คุ้มความ
-  ซับซ้อนที่ต้องเพิ่ม (ต้องนิยาม "ซ้ำ" ให้ชัดเจนก่อน ซึ่งยังไม่มีเกณฑ์ที่ชัดพอ)
-
-## วิธีตั้งค่า (Dev Container — VS Code + Docker)
-
-**สิ่งที่ต้องมี:** Docker Desktop ติดตั้งและเปิดอยู่, VS Code พร้อม extension "Dev Containers"
-
-1. เปิดโฟลเดอร์นี้ใน VS Code → กด `Ctrl+Shift+P` → `Dev Containers: Reopen in Container` — รอ build
-   ครั้งแรก (จะรัน `.devcontainer/postCreate.sh` ให้อัตโนมัติ: สร้าง `.env` พร้อม `SECRET_KEY` สุ่มใหม่
-   ถ้ายังไม่มี, ติดตั้ง Python library, รัน `schema.sql`, sync config จาก YAML, รัน Django `migrate`)
-2. สร้าง superuser สำหรับเข้า `/admin/` (ครั้งแรกครั้งเดียว):
-   ```bash
-   DB_USER=postgres DB_PASSWORD=postgres python manage.py createsuperuser
-   ```
-   (ต้องสลับไปใช้ `postgres` ชั่วคราว เพราะ `createsuperuser` เขียนตาราง auth ของ Django)
-3. รันเว็บ:
-   ```bash
-   python manage.py runserver 0.0.0.0:8000
-   ```
-   **ต้องใช้ `0.0.0.0` ไม่ใช่ `localhost`/`127.0.0.1`** — ไม่งั้นเครื่องอื่นใน network เดียวกันเข้าไม่ได้
-4. เปิดจากเครื่องที่รัน VS Code เอง: `http://localhost:8000/`
-
-### เข้าจากเครื่องอื่นใน network เดียวกัน (LAN access)
-
-ต้องทำ 2 อย่าง:
-
-1. **เปิด port ให้ container** — `docker-compose.yml` ตั้ง `ports: ["8000:8000"]` ให้ `app` service
-   ไว้แล้ว ถ้า container สร้างไปแล้วก่อนหน้านี้ ต้อง rebuild ครั้งเดียว: `Ctrl+Shift+P` →
-   `Dev Containers: Rebuild Container`
-2. **หา IP เครื่องที่รันเว็บ** แล้วเพิ่มลง `.env`:
-   ```bash
-   # Windows (PowerShell): ipconfig  |  Mac/Linux: ifconfig หรือ ip addr
-   ```
-   แก้ `.env`:
-   ```
-   CSRF_TRUSTED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000,http://<IP เครื่องคุณ>:8000
-   ```
-3. รัน `python manage.py runserver 0.0.0.0:8000` แล้วเข้าจากเครื่องอื่นด้วย `http://<IP>:8000`
-
-**ถ้ายังเข้าไม่ได้** ให้เช็ค Windows Firewall (มักเป็นสาเหตุหลัก):
-```powershell
-# รันเป็น Administrator
-Get-NetFirewallRule | Where-Object { $_.DisplayName -like "*8000*" }
-# ถ้าไม่เจอ rule เลย ให้เพิ่ม:
-New-NetFirewallRule -DisplayName "Django Dev 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
+```text
+สร้างแผน
+   ↓
+เลือก PO ที่เคย Import
+   ↓
+กำหนดยอดเผื่อ
+   ↓
+คำนวณ
+   ↓
+Production Plan
++
+Logistic Plan
 ```
-เช็คว่า Django รันด้วย `0.0.0.0` จริงไหมด้วย: `netstat -an | findstr "8000"` — ต้องเห็น `0.0.0.0:8000`
-ไม่ใช่ `127.0.0.1:8000`
 
-### รันนอก Dev Container (เช่น Python ตรงบนเครื่อง ไม่ใช้ Docker)
+---
 
-ต้องมี Postgres รันอยู่แล้วเอง (เช่นผ่าน `docker compose -f .devcontainer/docker-compose.yml up db`)
-แล้วสร้าง `.env` เอง:
+## 2.3 Existing Plan + Add PO
+
+Plan ไม่ได้มีความหมายว่า "สร้างครั้งเดียวแล้วจบ"
+
+ใน Workflow จริง PO สามารถเข้ามาเพิ่มเติมภายหลังได้
+
+ระบบจึงรองรับแนวคิด:
+
+```text
+Plan เดิม
+   ↓
+นำเข้า / เพิ่ม PO
+   ↓
+รวม PO ชุดใหม่กับ Plan เดิม
+   ↓
+Recalculate
+   ↓
+Plan ล่าสุด
+```
+
+การเพิ่ม PO ไม่ควรบังคับให้ผู้ใช้งานสร้าง Plan ใหม่ ถ้า Business Flow จริงต้องการให้ใช้ Plan เดิมต่อ
+
+---
+
+# 3. รอบเย็น → รอบเช้า
+
+เป็นหนึ่งใน Workflow สำคัญของระบบ
+
+## 3.1 รอบเย็น
+
+```text
+กด "สร้างแผน"
+      ↓
+นำเข้า PO รอบเย็น
+      ↓
+ระบบคำนวณ
+      ↓
+ได้ Plan
+      ↓
+Download Excel
+```
+
+Excel ที่ได้ต้องอ้างอิง Template และยังมี Formula สำหรับให้ผู้ใช้งานตรวจสอบหรือแก้ไขต่อภายหลังได้
+
+---
+
+## 3.2 รอบเช้า
+
+เมื่อมี PO รอบเช้าเข้ามาภายหลัง:
+
+```text
+เข้า Plan ล่าสุดของรอบเย็น
+      ↓
+เพิ่ม PO รอบเช้า
+      ↓
+รวม PO รอบเย็น + รอบเช้า
+      ↓
+Recalculate
+      ↓
+Plan ล่าสุด
+      ↓
+Download Excel
+```
+
+ดังนั้น Plan จึงเป็นข้อมูลที่สามารถ **เปลี่ยนแปลงและคำนวณใหม่ตาม PO ที่เพิ่มเข้ามา** ได้
+
+---
+
+# 4. ยอดเผื่อ (Buffer)
+
+ยอดเผื่อเป็นข้อมูลที่ใช้ในการจัดทำ Plan และสามารถเปลี่ยนแปลงได้ภายหลัง
+
+ระบบรองรับ:
+
+```text
+Create Plan
+   ↓
+กำหนดยอดเผื่อ
+   ↓
+Calculate
+```
+
+และ:
+
+```text
+Existing Plan
+   ↓
+แก้ไขยอดเผื่อ
+   ↓
+Recalculate
+```
+
+การแก้ยอดเผื่อของ Plan เดิมใช้ `plan_run_id` เดิม ไม่สร้าง Plan ใหม่ซ้อนโดยไม่จำเป็น
+
+ค่าเริ่มต้นของยอดเผื่อสามารถอ้างอิงจากค่าที่บันทึกล่าสุดในระบบ
+
+> สูตรหรือหลักเกณฑ์ทางธุรกิจสำหรับการคำนวณยอดเผื่ออัตโนมัติยังไม่ถูกกำหนดเป็น Business Rule ในระบบ
+
+---
+
+# 5. Production Plan และ Logistic Plan
+
+## Production Plan
+
+ใช้สำหรับวางแผนการผลิตจาก PO
+
+ข้อมูลหลักมาจาก:
+
+```text
+PO
++
+Buffer
++
+Production Template
+      ↓
+Production Plan
+```
+
+## Logistic Plan / แพลนกระจาย
+
+ใช้สำหรับจัดข้อมูลสินค้าและจำนวนตามจุดส่ง / Sub-location / PO
+
+โครงสร้าง Logistic Group สามารถตั้งค่าได้ผ่านระบบ โดยไม่จำเป็นต้องแก้ Code เมื่อมี Group เพิ่มขึ้นในกรณีที่มี Template รองรับแล้ว
+
+> **แพลนรถ (Truck Plan) ไม่ใช่ Logistic Plan**
+>
+> Logistic Plan เป็นข้อมูลสำหรับการกระจายสินค้า
+> Truck Plan เป็นขั้นตอนถัดไปสำหรับนำ Logistic Plan ไปจัดกลุ่มเข้ารถ
+
+---
+
+# 6. Location และ Logistic Group
+
+ระบบแยกแนวคิดระหว่าง:
+
+* Location / FC
+* Sub-location
+* Logistic Group
+* Logistic Template
+
+ตัวอย่างโครงสร้างทางธุรกิจ:
+
+```text
+Logistic Group
+├── บางบัวทอง
+│   └── บาร์ระบุวันผลิต
+├── มหาชัย
+├── สุวรรณ
+└── รอบเช้า ต่างจังหวัด
+```
+
+ข้อมูล Location Mapping ถูกเก็บใน Database และใช้ประกอบการจัดกลุ่มข้อมูลจริงในการคำนวณ
+
+เมื่อพบ FC ที่ระบบยังไม่รู้จัก ผู้ใช้งานสามารถ Resolve Mapping ผ่าน Web ก่อนสร้าง Plan
+
+---
+
+# 7. Template Management
+
+Template Excel เป็นส่วนสำคัญของระบบ
+
+ระบบรองรับ:
+
+* Template Version
+* Template Group
+* Group Activation
+* Version History
+* Upload Template
+* Validate Template
+* Restore Version
+* Download Template Version
+* เก็บ Original Filename
+* Active Group เป็น Source of Truth ของ Template ที่ใช้งานจริง
+
+Production Template และ Logistic Template สามารถมีโครงสร้างแตกต่างกันตาม Business Requirement
+
+---
+
+# 8. Dynamic Template
+
+ส่วนนี้เป็น **งานพัฒนาหลักที่ยังอยู่ใน Roadmap**
+
+เป้าหมายคือให้ระบบรองรับ Template ที่เปลี่ยนจำนวนข้อมูลได้จริงทั้งสองแกน
+
+### Dynamic Row
+
+จำนวน Product / SKU สามารถเพิ่มหรือลดได้
+
+```text
+Product A
+Product B
+Product C
+...
+Product N
+```
+
+ไม่ควรผูกกับจำนวน Row ที่มีอยู่ใน Template เดิมแบบตายตัว
+
+### Dynamic Column
+
+จำนวน PO สามารถเพิ่มหรือลดได้
+
+```text
+PO1 | PO2 | PO3 | ... | PON
+```
+
+โดยลำดับ PO ปัจจุบันอ้างอิงจากการเรียงเลข PO
+
+### Dynamic Formula
+
+Formula ต้องสามารถปรับตาม:
+
+* จำนวน Product
+* จำนวน PO
+* Location
+* Sub-location
+* Buffer
+* Total
+* Production Quantity
+* Logistic Quantity
+
+### ลด Hardcode
+
+จุดที่ผูกกับตำแหน่ง Excel โดยไม่จำเป็นจะถูกทยอยตรวจสอบและลดลง
+
+อย่างไรก็ตาม **Business Rule ที่ตั้งใจให้เป็นค่าคงที่ไม่ควรถูกลบเพียงเพราะเป็น hardcode**
+
+ตัวอย่างเช่น Business Concept อย่าง `รอบเช้าต่างจังหวัด` ไม่ได้หมายความว่าเป็น Bad Hardcode โดยอัตโนมัติ
+
+---
+
+# 9. Web ↔ Excel
+
+ระบบมีแนวคิด:
+
+> **Database เป็น Source of Truth ของข้อมูล Plan**
+
+ไม่ใช่ให้ Excel เป็น Database
+
+Flow หลัก:
+
+```text
+PO / Plan Data
+      ↓
+Database
+      ↓
+Calculation
+      ↓
+PlanSkuResult
+      ↓
+Web
+      ↓
+Excel Generation
+```
+
+`PlanSkuResult` ทำหน้าที่เป็นข้อมูลผลลัพธ์ระดับ:
+
+```text
+1 SKU × 1 Column
+```
+
+เพื่อให้ Web สามารถแสดงผลจากข้อมูลที่คำนวณแล้ว โดยไม่จำเป็นต้องอ่านค่าจาก Excel ที่ถูกสร้างขึ้นมาใหม่ทุกครั้ง
+
+ในขณะเดียวกัน เมื่อผู้ใช้งาน Download Excel ระบบสามารถสร้างไฟล์ใหม่จาก:
+
+```text
+Database
++
+Current Template
++
+Formula / Layout
+```
+
+---
+
+# 10. Data Model หลัก
+
+ระบบใช้ Django ORM ร่วมกับ PostgreSQL
+
+โมเดลสำคัญในฝั่ง CP All ได้แก่:
+
+* `ProductMaster`
+* `LocationMapping`
+* `LogisticGroup`
+* `PoImport`
+* `PoLine`
+* `PlanRun`
+* `PlanRunLogisticFile`
+* `TemplateVersion`
+* `TemplateGroup`
+* `TemplateGroupItem`
+* `PlanSkuResult`
+
+ความสัมพันธ์หลัก:
+
+```text
+PO Import
+   │
+   └── PO Line
+          │
+          ├── Product / SKU
+          │
+          └── Location / Sub-location
+                    │
+                    ▼
+                 PlanRun
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+ Production Plan       Logistic Plan
+          │                   │
+          └─────────┬─────────┘
+                    ▼
+              PlanSkuResult
+```
+
+---
+
+# 11. Data-first Architecture
+
+ระบบใช้แนวคิด **Data-first**
+
+เมื่อ Import PO:
+
+```text
+Excel PO
+   ↓
+Parse
+   ↓
+Database
+   ↓
+ไฟล์ต้นฉบับไม่ใช่ Source of Truth
+```
+
+เมื่อ Download Plan:
+
+```text
+Database
+   +
+Template Version
+   ↓
+Generate Excel
+   ↓
+Download
+```
+
+ข้อดีคือ:
+
+* ไม่ต้องเก็บไฟล์ Excel ทุกครั้ง
+* สามารถสร้างไฟล์ใหม่จากข้อมูลล่าสุดได้
+* Web สามารถอ่านข้อมูลจาก Database
+* Template Version ที่ใช้สร้าง Plan สามารถถูกควบคุมได้
+* ลดปัญหาไฟล์บน Disk ไม่ตรงกับข้อมูลในระบบ
+
+---
+
+# 12. Inactive SKU
+
+`ProductMaster.is_active=False` ใช้ระบุ SKU ที่ไม่ควรนำมาสร้าง Plan ในสถานะปัจจุบัน
+
+หาก PO มี SKU ที่ Inactive และมีการสั่งจริง:
+
+```text
+PO
+ ↓
+Inactive SKU
+ ↓
+BLOCK
+```
+
+ระบบตรวจสอบก่อนเข้าสู่การสร้าง Plan และมีการตรวจซ้ำใน Flow ที่เกี่ยวข้องกับการคำนวณใหม่
+
+ถ้า SKU Inactive แต่ไม่มี PO ในรอบนั้น ระบบสามารถซ่อน SKU ดังกล่าวจากผลลัพธ์ที่เกี่ยวข้องโดยไม่ลบ Row จริงจาก Template เพื่อไม่ให้ Formula และโครงสร้าง Template เสียหาย
+
+---
+
+# 13. Architecture
+
+โครงสร้างหลักของระบบ:
+
+```text
+core/
+├── db.py
+└── models.py
+
+portal/
+
+customers/
+└── cpall/
+    ├── logic/
+    │   ├── po_parser.py
+    │   ├── po_regenerator.py
+    │   ├── po_view_data.py
+    │   ├── grouping.py
+    │   ├── excel_export.py
+    │   ├── logistic_plan_export.py
+    │   ├── plan_runner.py
+    │   ├── plan_regenerator.py
+    │   ├── plan_result_extractor.py
+    │   ├── plan_view_data.py
+    │   ├── template_manager.py
+    │   ├── location_mapping_manager.py
+    │   ├── product_master_manager.py
+    │   ├── config_loader.py
+    │   └── date_utils.py
+    │
+    ├── models.py
+    ├── views.py
+    ├── urls.py
+    ├── admin.py
+    │
+    ├── config/
+    │   ├── sku_master.yaml
+    │   └── location_mapping.yaml
+    │
+    ├── excel_templates/
+    │
+    └── management/
+        └── commands/
+
+sql/
+└── schema.sql
+
+webproject/
+```
+
+แนวคิดของ Architecture คือ:
+
+> **1 Customer = 1 Django App**
+
+ปัจจุบันมี:
+
+```text
+cpall = CP All / 7-11
+```
+
+และโครงสร้างถูกเตรียมไว้เพื่อรองรับ Customer อื่นในอนาคต
+
+---
+
+# 14. PostgreSQL Row-Level Security
+
+ระบบเตรียมการแยกข้อมูลระหว่าง Customer ด้วย PostgreSQL RLS
+
+มีการแยก Connection Role:
+
+### `app_role`
+
+ใช้สำหรับการทำงานปกติของ Application
+
+```text
+Application
+   ↓
+app_role
+   ↓
+PostgreSQL RLS
+```
+
+### `postgres`
+
+ใช้สำหรับงานระดับ Database เช่น Schema / Migration เท่านั้น
+
+ไม่ควรใช้เป็น Runtime Connection สำหรับ Query ข้อมูลทั่วไป เพราะ Superuser สามารถ bypass RLS ได้
+
+---
+
+# 15. Technology Stack
+
+* Python
+* Django
+* PostgreSQL
+* Django ORM
+* HTMX
+* OpenPyXL
+* LibreOffice สำหรับตรวจสอบ / คำนวณ Formula ในกระบวนการสร้างผลลัพธ์
+* Docker / Docker Compose
+* VS Code Dev Containers
+* Django Admin
+* Kubi Admin Theme
+
+---
+
+# 16. Development Setup
+
+## Requirements
+
+* Docker Desktop
+* VS Code
+* VS Code Dev Containers Extension
+
+## Start
+
+เปิด Project ใน VS Code แล้วเลือก:
+
+```text
+Dev Containers: Reopen in Container
+```
+
+หลังจาก Container พร้อมแล้ว:
+
 ```bash
-cp .env.example .env
-python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-# เอาผลลัพธ์ไปแทนค่า SECRET_KEY ใน .env — แล้วเปิดคอมเมนต์บรรทัด DB_* ใน .env ด้วย
+python manage.py runserver 0.0.0.0:8000
 ```
 
-### pgAdmin (ดูข้อมูลแบบคลิกดู)
+เปิด:
 
-`http://localhost:5050` → login `admin@example.com` / `admin12345` → Register Server →
-Host=`db`, Port=`5432`, Username=`postgres`, Password=`postgres`, Database=`gtd_poc`
+```text
+http://localhost:8000/
+```
 
-## เครื่องมือช่วยตรวจโค้ด
+สำหรับ Django Admin:
+
 ```bash
-pip install -r requirements-dev.txt --break-system-packages
-ruff check .          # ตรวจสอบ
-ruff check . --fix    # แก้ที่แก้อัตโนมัติได้
+DB_USER=postgres DB_PASSWORD=postgres python manage.py createsuperuser
 ```
 
-## ข้อจำกัดที่ควรรู้ก่อนใช้งานจริง
+---
 
-- **ยอดเผื่อยังไม่มีสูตรคำนวณจริง** — หน้าเว็บให้กรอกทุกครั้งที่สร้างแผนแล้ว (ค่าเริ่มต้นดึงจากยอดเผื่อ
-  ล่าสุดที่เคยบันทึกไว้จริง) แต่ยังต้องถาม Admin ว่ามีสูตร/หลักเกณฑ์อะไรกำหนดตัวเลขจริงไหม
-- **ลำดับ PO1/PO2/PO3...** เดาจากเรียงเลข PO น้อยไปมาก — ยังไม่ได้ยืนยันกับ Admin (มี tooltip ในตาราง
-  เว็บแสดงเลข PO จริงเบื้องหลังแต่ละคอลัมน์แล้ว ช่วยตรวจสอบง่ายขึ้น)
-- **ไฟล์เทมเพลต "รอบเช้าต่างจังหวัด" มีแค่ 18 SKU** (ขาดพุทราจีน) ต่างจากกลุ่มอื่นที่มี 19 — แต่หน้า
-  กรอกยอดเผื่อดึงจาก Production Plan (ครบ 19) แล้ว ไม่ผูกกับข้อจำกัดนี้อีกต่อไป
-- **จำนวนคอลัมน์ PO ต่อจุดส่งในเทมเพลต Logistic Plan ไม่คงที่** — เกินแล้วต้องไปเพิ่มคอลัมน์ในเทมเพลตเอง
-  (ใช้หน้า "จัดการ Template" ในเว็บได้) ส่วนการ "เพิ่มกลุ่มพื้นที่ใหม่ทั้งกลุ่ม" ทำผ่าน Django Admin
-  ได้แล้ว (`/admin/cpall/logisticgroup/`) ไม่ต้องแก้โค้ด — แต่ยังต้องเตรียมไฟล์เทมเพลตของกลุ่มนั้นเอง
-  แล้วอัปโหลดที่หน้า "จัดการ Template" ให้ครบก่อนถึงจะสร้างแผนที่มีกลุ่มนั้นได้
-- **ไฟล์ PO/Excel ที่สร้างระหว่างทำงานถูกลบทิ้งอัตโนมัติ** (data-first) — ถ้าต้องดูไฟล์จริงที่ Admin
-  อัปโหลด/ระบบสร้างไว้ ต้องกดดูผ่านเว็บ (ระบบสร้างไฟล์ใหม่ให้สดๆ ตอนกดดาวน์โหลดเสมอ) ไม่มีไฟล์ค้างอยู่
-  บนดิสก์ให้เปิดตรงๆ นอกเว็บอีกต่อไป — ยกเว้น PO/แผนเก่าที่สร้างก่อนอัปเดตนี้ ซึ่งยังมีไฟล์เดิมค้างอยู่
-- **`ProductMaster` (รหัสสินค้า) ไม่มีผลต่อการคำนวณแผนเลย** — ใช้แค่แสดงชื่อสินค้าที่หน้ากรอกยอดเผื่อ
-  (fallback ไปแสดงบาร์โค้ดเฉยๆ ถ้าไม่มีข้อมูล) ระบบสร้างแผนจริงอ่านจากไฟล์เทมเพลต Excel เป็นหลัก ไม่ join
-  กับตารางนี้เลย — ต่างจาก `LocationMapping` ที่มีผลจริง (ใช้จัดกลุ่มพื้นที่) พิสูจน์แล้วด้วยไฟล์ทดสอบ
-  จริง (SKU ที่ไม่มีใน `ProductMaster` แต่มีในไฟล์ PO+เทมเพลต สร้างแผนสำเร็จปกติ ไม่มี error เลย) —
-  **ยกเว้น** ตอนนี้เพิ่มการเช็ค `is_active` แล้ว (ดู "สถานะปัจจุบัน" ด้านบน) เป็นจุดเดียวที่ ProductMaster
-  เริ่มมีผลต่อ pipeline การสร้างแผนจริง
-- **openpyxl's `.cell(value=None)` ไม่เคลียร์เซลล์จริง** (บทเรียนสำคัญจากบั๊กที่เจอ) — ตีความ
-  `value=None` ว่า "ไม่ได้ส่งค่ามา" ไม่ใช่ "ตั้งค่าว่างเปล่า" ถ้าเซลล์มีค่าเก่าค้างอยู่ก่อน (จากไฟล์
-  เทมเพลต live ที่ใช้ซ้ำทุกรอบ) จะยังคงค่าเดิมอยู่ ต้องเข้าถึง `.value` ผ่าน attribute ตรงๆ
-  (`ws.cell(row, col).value = None`) ถึงจะเคลียร์ได้จริง — เจอบั๊กนี้กระทบยอดเผื่อใน Production Plan
-  จริงๆ มาแล้ว (ยอดเผื่อรอบก่อนหน้าค้างอยู่ ทำให้ "ยอดที่ต้องผลิตจริง" คำนวณผิด) แก้ไปแล้วทุกจุดที่พบ
+# 17. LAN Access
 
-## ข้อควรระวังเรื่อง schema.sql migration order
+รัน Django ด้วย:
 
-เจอปัญหา migration ordering ที่ซับซ้อนหลายรอบระหว่างพัฒนา — ถ้าจะแก้ `schema.sql` ต่อในอนาคต (โดยเฉพาะ
-`ALTER TABLE`/`RENAME TABLE`/migration `DO $$` blocks) พึงระวัง 2 บทเรียนนี้:
+```bash
+python manage.py runserver 0.0.0.0:8000
+```
 
-1. **`CREATE TABLE IF NOT EXISTS` รันจากบนลงล่างตามลำดับบรรทัดในไฟล์เสมอ** — ถ้า migration ที่ควรรัน
-   "ก่อน" (เช่น `RENAME TABLE`, `ALTER TABLE ... ADD COLUMN`) ดันอยู่ "หลัง" `CREATE TABLE` ของตารางนั้น
-   ในไฟล์ จะเกิดปัญหาจริง (เช่น `RENAME` ไม่ทำงานเพราะตารางปลายทางถูกสร้างว่างเปล่าไปแล้วก่อนหน้า
-   หรือ `ALTER TABLE` ล้มเหลวเพราะตารางยังไม่ถูกสร้างเลยสำหรับ fresh install) — เจอบั๊กนี้จริงตอนย้าย
-   `sku_master` → `product_master` (ทั้ง 2 แบบ) ต้องจัดลำดับใหม่ทั้งหมดจนกว่าจะทดสอบผ่าน
-2. **ทดสอบ 3 สถานการณ์เสมอทุกครั้งที่แก้ schema.sql**: (ก) รันกับฐานข้อมูลที่มีข้อมูลอยู่แล้ว (ข้อมูล
-   ต้องไม่หาย) (ข) รันซ้ำกับฐานข้อมูลเดิมอีกครั้ง (idempotent — ต้องไม่ error/ไม่สร้างซ้ำ) (ค) รันกับ
-   ฐานข้อมูลใหม่เอี่ยมที่ไม่เคยมีอะไรเลย (fresh install) — เจอบั๊กที่ซ่อนอยู่มาตั้งแต่ก่อนหน้า
-   (`ALTER TABLE plan_sku_result` มาก่อน `CREATE TABLE` ของมันเอง) เพราะไม่เคยทดสอบข้อ (ค) มาก่อนเลย
-   จนกว่าจะทดสอบ fresh install จริงจังครั้งแรกตอนแก้เรื่อง rename นี้เอง
+และกำหนด `CSRF_TRUSTED_ORIGINS` ใน `.env` ให้ครอบคลุม IP ของเครื่องที่ให้บริการ
 
-## ข้อควรระวังเรื่องการส่ง patch เฉพาะไฟล์ (ไม่ใช่ full zip)
+ตัวอย่าง:
 
-เจอปัญหา `ImportError`/ฟีเจอร์เงียบไม่ทำงาน 2 รอบติดกัน จากการส่ง patch แค่ไฟล์เดียวที่แก้ตรงๆ โดยไม่เช็ค
-**cross-file dependency** — ไฟล์ A อาจ import/เรียกใช้ฟังก์ชันจากไฟล์ B ที่ไม่ได้แก้ในรอบนั้น แต่ถ้า B
-เวอร์ชันปลายทาง (เครื่อง user) ไม่ตรงกับที่ A คาดไว้ จะพังแบบไม่ชัดเจน (บางครั้ง crash ทันที บางครั้ง
-"เงียบผ่านไปเฉยๆ" ไม่มี error เตือนเลย ซึ่งอันตรายกว่ามาก สังเกตยากกว่ามาก) — แนวทางที่ตกลงกับ user:
-ส่งแค่ไฟล์ที่แก้ตามปกติ **แต่ต้องไล่เช็ค cross-file dependency ทุกครั้งก่อนส่ง** (ไฟล์ที่ import จากมัน /
-ไฟล์ที่เรียกใช้ฟังก์ชันจากมัน) แล้วรวมส่งให้ครบเป็นชุดเดียวเสมอถ้ามีความเสี่ยง
+```env
+CSRF_TRUSTED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000,http://192.168.x.x:8000
+```
 
-## บทเรียนเรื่องการทดสอบ end-to-end แบบเต็มวงจร ("mega test")
+จากเครื่องอื่นใน Network เดียวกัน:
 
-การทดสอบแยกทีละ feature (unit-level) ผ่านหมด **ไม่ได้แปลว่าไม่มีบั๊ก** — เจอบั๊กจริงหลายตัวจากการเดินเต็ม
-วงจรครั้งเดียว (import ที่มี duplicate → confirm → resolve location/SKU → buffer form → สร้างแผน →
-ดูตาราง → แก้ยอดเผื่อ → ดาวน์โหลด) ที่การทดสอบแยกทีละจุดไม่เคยจับได้ เช่น:
-- หน้าดูตาราง/ดาวน์โหลดของกลุ่มที่สร้างแผนไม่สำเร็จ (บางกลุ่มอาจ fail ได้ปกติ ขณะกลุ่มอื่นสำเร็จ) เจอ
-  404 เปล่าไม่มีคำอธิบาย ทั้งที่ error message ละเอียดเก็บไว้อยู่แล้วในฐานข้อมูล ไม่เคยถูกดึงมาแสดง
-- ZIP ทั้งแผนข้ามไฟล์ของกลุ่มที่ fail ไปเงียบๆ โดยไม่มีคำเตือนอะไรเลย — อันตรายกว่า error ตรงๆ เสียอีก
-  เพราะ Admin ดาวน์โหลดสำเร็จ (200) แต่ไม่รู้ตัวว่าขาดไฟล์ไปจนกว่าจะไปใช้งานจริง
+```text
+http://<SERVER-IP>:8000
+```
 
-แนวทางที่ได้ผล: สร้างไฟล์ PO ทดสอบที่รวมทุก edge case ไว้ในไฟล์เดียว (exact duplicate + unknown
-location + unknown SKU) แล้วเดินทั้ง flow รวดเดียวด้วย Django test client (เก็บ session ต่อเนื่องกันใน
-script เดียว ไม่แยกเป็นหลาย process เพราะ session ไม่ persist ข้าม process) — ควรทำแบบนี้เป็นระยะๆ
-โดยเฉพาะหลังเพิ่ม feature ใหม่หลายตัวติดกันโดยไม่เคยทดสอบว่าทำงานร่วมกันได้ถูกต้อง
+---
 
-**ข้อควรระวังตอนทำ mega test:** ต้องล้างข้อมูลทดสอบให้สะอาดสนิทก่อนเริ่มเสมอ (ไม่ใช่แค่ po_import/
-plan_run — ต้องเช็ค `location_mapping`/`product_master` ทั้ง DB และไฟล์ YAML ต้นทางด้วย) ไม่งั้นรอบ
-ทดสอบถัดไปจะได้ผลลัพธ์ที่ผิดเพราะข้อมูลทดสอบเก่าสะสม (เช่น "unknown location" ที่เพิ่ง resolve ไปแล้ว
-ในรอบก่อน จะไม่ถูกมองว่า unknown อีกในรอบถัดไป ทำให้ assert ผิดพลาดทั้งที่ระบบทำงานถูกต้อง)
+# 18. Code Quality
 
-## คำถามที่ต้องเตรียมถาม Admin (Note ถึงตัวเอง)
+สามารถใช้ Ruff ตรวจสอบ Code:
 
-- **ที่มาไฟล์ PO**: ตอนนี้ไฟล์ที่ระบบใช้เป็น .xlsx export ที่มีชื่อคอลัมน์ภาษาอังกฤษตรงเป๊ะ (ลักษณะ
-  export ตรงจากระบบ CP All) — ยืนยันว่าไม่มีขั้นตอน PDF/พิมพ์มือแทรกอยู่ก่อนหน้าใช่ไหม? หลังนำเข้าระบบ
-  แล้ว มีเก็บไฟล์ต้นฉบับไว้ที่อื่นอีกไหม (โฟลเดอร์/Server/เอกสารอ้างอิง)?
-- **ยอดเผื่อ**: คำนวณยังไง? มีสูตรจริงไหม หรือ Admin ตัดสินใจเองล้วนๆ ทุกครั้ง? ทำไมมีแค่ไฟล์
-  "รอบเช้าต่างจังหวัด" ไฟล์เดียวที่มีคอลัมน์นี้? ยอดคืนที่คำนวณได้เอาไปทำอะไรต่อในทางปฏิบัติ?
-- **"ยอดที่ต้องผลิตจริง"** (แถวคำนวณในเทมเพลต Production Plan ใต้ยอดสั่งตาม PO — รวมยอดเผื่อ หักยอดคืน
-  แล้ว): เข้าใจถูกไหมว่านี่คือยอดที่โรงงานต้องผลิตจริง? สีเซลล์ (เห็นเป็นสีน้ำเงินในไฟล์จริง) ตรงกับแถว
-  นี้ไหม หรือมีความหมายอื่น? ใช้ยังไงในทางปฏิบัติ ต่างจาก "ยอดสั่งตาม PO" เฉยๆ ยังไง?
-- **ลำดับ PO1/PO2/PO3**: Admin เรียงเข้าคอลัมน์ตามอะไรจริงๆ?
-- **พุทราจีน**: ทำไมเทมเพลต "รอบเช้าต่างจังหวัด" ไม่มีแถวนี้? ปกติจุดกลุ่มนี้ไม่เคยสั่งพุทราจีนเลยจริงไหม?
-- **จำนวนคอลัมน์ PO ต่อจุดส่ง**: มีขั้นตอน/กฎเกณฑ์ตายตัวไหมตอนเพิ่มคอลัมน์ใหม่? ถ้าจำนวน PO เกินคอลัมน์
-  ที่เตรียมไว้ในเทมเพลต ทำยังไง?
-- **เทมเพลตที่ Admin แก้เอง** (เพิ่มคอลัมน์ PO/แถว SKU ใหม่) — มีแจ้งล่วงหน้าก่อนไหม หรือแก้เองได้เลย?
-- **การแก้ไข/ยกเลิก PO**: ถ้า PO ถูกแก้ไขยอดหลังนำเข้าระบบแล้ว (เช่น 1,000 → 1,200 ชิ้น) ต้องแก้แผนเดิม
-  หรือสร้าง PO ใหม่? ถ้า PO ถูกยกเลิกหลังทำแผนไปแล้วทำยังไง? มีกรณี PO เดียวแบ่งส่งหลายวันไหม?
-- **การจัดรถ**: มีรถทั้งหมดกี่คัน? แต่ละคันความจุเท่าไร (ตะกร้า/น้ำหนัก/CBM/จำนวนชิ้น)? รถแต่ละคัน
-  เหมือนกันไหม? หลักเกณฑ์เลือกจุดส่งต่อคัน (เช่น ตามเส้นทาง/ระยะทาง)? 1 คันส่งได้กี่จุดส่ง? ลำดับการขึ้น
-  ของบนรถมีผลไหม? จำนวนรถต่อวันคงที่ไหม ถ้ามีรถเพิ่ม/ลดทำยังไง? ถ้าของเต็มคันแล้วเหลือทำยังไง? ถ้ารถ
-  ไม่พอทำยังไง?
-- **จุดส่ง/SKU ใหม่ในอนาคต**: ต้องทำยังไง ต้องแก้ที่ไหนบ้าง?
+```bash
+ruff check .
+```
 
-# 1. ล้างข้อมูล PO/แผนก่อนตามปกติ (คำสั่งเดิม)
-python manage.py clear_po_and_plan_data
+และแก้สิ่งที่ Ruff แก้ได้อัตโนมัติ:
 
-# 2. แล้วค่อยรีเซ็ตตัวนับ id กลับไปเริ่มที่ 1 (คำสั่งใหม่ แยกต่างหาก)
-python manage.py dev_reset_po_and_plan_id_sequences
+```bash
+ruff check . --fix
+```
 
+---
 
-สิ่งที่จะทำเพิ่มใน phase ถัดไป
-1. auto add product คือเมื่อ import template ใหม่เข้าไปแล้ว ตรวจพบว่า เป็น Product อันใหม่ ให้เพื่อใน database เองเลย โดยแจ้ง admin ก่อน เหมือนหน้าที่เพิ่มจาก PO อะ หรือตรวจสอบพบข้อมูลที่เปลี่ยนไป ก็ให้บอกและถามว่าจะแก้ไหม (work around ก่อนที่จะทำระบบ template auto config)
-2. แพลนรถ โดยจะให้มีแบบเลือกได้ว่าจะใช้รถที่ระบบแนะนำหรือจะเลือกรถเองก็ได้ แล้วให้ user กรอกเลขทะเบียนกับผู้ขับเอง เนื่องจากขั้นตอนปัจจุบันคือ checker จะเป็นคนบอกว่าจะใช้รถไหน แล้วแอดมินจะดูความเหมาะสมแล้วแก้ลงไฟล์อีกที
-3. ระบบ template auto config คือ admin ไม่จำเป็นต้องแก้ template เองอีกแล้วหากไม่ได้เปลี่ยนหน้าตาของไฟล์ ระบบจะ gen ออกมาให้เลย โดย excel ที่ได้จะต้องมีสูตรเหมือนเดิมเผื่อการแก้ไขนอกระบบเพื่อความยืดหยุ่นในการทำงานอีกที โดยข้อมูลจะอยู่ใน database เป็นหลัก และมีหน้า config สำหรับการแก้ไขข้อมูลได้ มีพรีวิวก่อนว่าจะมีสินค้าอะไร PO ที่ไหนกี่อันบ้าง เพื่อดูก่อนสร้างในระบบว่าทำถูกหรือไม่
+# 19. Current Development Status
+
+## ✅ Completed / Foundation
+
+* Portal
+* Home page
+* PO Import
+* PO Data-first storage
+* Location Mapping
+* Product Master
+* Production Plan
+* Logistic Plan
+* Buffer input / edit
+* Plan recalculation foundation
+* Plan result storage
+* Template Management
+* Template Version
+* Template Group
+* Logistic Group configuration
+* Active Template Group
+* Template Version History
+* Web Plan Detail
+* Excel regeneration / download
+* ZIP download
+* Inactive SKU validation
+* LAN development access
+* PostgreSQL / RLS foundation
+
+---
+
+# 20. Current Roadmap
+
+## 🔴 Priority 1 — Production Plan Calculation & Recalculation
+
+ตรวจสอบและทำให้ Business Flow สมบูรณ์:
+
+* Create Plan + Import PO
+* Create Plan + Existing PO
+* Existing Plan + Add PO
+* รอบเย็น → สร้าง Plan
+* รอบเช้า → เพิ่ม PO เข้า Plan เดิม
+* Edit Buffer
+* Recalculate
+* PlanSkuResult
+* Web Plan Detail
+* PO Set Control
+* Calculation Source of Truth
+
+---
+
+## 🔴 Priority 2 — Dynamic Template
+
+ทำให้ Excel รองรับข้อมูลที่เปลี่ยนแปลงจริง:
+
+* Dynamic Product Rows
+* Dynamic PO Columns
+* Dynamic Location / Sub-location
+* Dynamic Formula
+* ลด Hardcode ที่ไม่จำเป็น
+* Preserve Template Layout
+* Production Excel
+* Logistic Excel
+* Web ↔ Excel Consistency
+
+---
+
+## 🟠 Priority 3 — Test / UAT
+
+ทดสอบ End-to-End หลัง Business Flow และ Dynamic Template มีความนิ่ง
+
+ครอบคลุม:
+
+* PO
+* Product
+* Buffer
+* Recalculate
+* รอบเย็น
+* รอบเช้า
+* Multiple PO
+* Multiple Location
+* Multiple Sub-location
+* Dynamic Row
+* Dynamic Column
+* Dynamic Formula
+* Web = Excel
+
+---
+
+## 🟡 Priority 4 — Auth / Permission
+
+* Login
+* Role
+* Admin / User
+* Template Permission
+* PO Permission
+* Plan Permission
+
+---
+
+## 🟡 Priority 5 — LAN / Deployment
+
+* Production configuration
+* `DEBUG=False`
+* CSRF
+* Database configuration
+* Backup
+* Deployment
+
+---
+
+## 🟡 Priority 6 — Truck Plan
+
+เป็น Feature ใหม่ที่ต่อยอดจาก Logistic Plan
+
+```text
+Logistic Plan
+      ↓
+Destination
+      ↓
+Product + Quantity
+      ↓
+Vehicle Capacity
+      ↓
+แนะนำจัดเข้ารถ
+```
+
+เป้าหมายแรกคือ **แนะนำการจัดสินค้าเข้ารถ** ไม่จำเป็นต้องเริ่มจากการกำหนดทะเบียนรถ
+
+งานนี้จะทำหลัง Core Production / Logistic Flow มีความนิ่งแล้ว
+
+---
+
+## 🟣 Priority 7 — Technical Debt
+
+งานกลุ่มนี้จะทำแบบเลือกเป็นจุด ๆ และต้องตรวจ Cross-file Dependency ก่อนทุกครั้ง
+
+รายการที่อยู่ในกลุ่มนี้ เช่น:
+
+* LocationMapping ↔ LogisticGroup ↔ Template consistency
+* Log / Audit Trail
+* Filesystem / Transaction consistency
+* Customer consistency
+* `CREATE_PRODUCT` metadata
+* Legacy compatibility cleanup
+* Refactor
+
+**Legacy code จะไม่ถูกลบเพียงเพราะดูเก่า**
+
+ก่อนลบต้องตรวจว่า:
+
+1. มี Reference หรือไม่
+2. มี Active Code Path หรือไม่
+3. มี Template / Data ที่พึ่งพาหรือไม่
+4. มี Test หรือไม่
+5. กระทบ Production / Logistic หรือไม่
+
+ถ้ายังมีความไม่แน่นอน จะไม่ลบ
+
+---
+
+# 21. Design Principles
+
+## 21.1 Workflow First
+
+ระบบต้องเข้าใจ Workflow จริงของผู้ใช้งานก่อนออกแบบ Feature
+
+```text
+Business Workflow
+       ↓
+System Support
+```
+
+ไม่ใช่:
+
+```text
+System Limitation
+       ↓
+Force User Workflow
+```
+
+---
+
+## 21.2 Business Rule ≠ Technical Limitation
+
+สิ่งที่ระบบต้อง Block ควรเป็นสิ่งที่จำเป็น เช่น:
+
+* Data Integrity
+* Business Rule
+* ข้อมูลที่ไม่เพียงพอต่อการคำนวณ
+* ข้อมูลที่ขัดกับเงื่อนไขของระบบ
+
+แต่ไม่ควร Block เพียงเพราะ:
+
+> "Code ปัจจุบันทำได้แค่นี้"
+
+---
+
+## 21.3 Excel ยังคงเป็นเครื่องมือของ User
+
+ระบบไม่ได้พยายามกำจัด Excel
+
+เป้าหมายคือ:
+
+```text
+ระบบช่วยเตรียมข้อมูล
+       ↓
+ระบบช่วยคำนวณ
+       ↓
+ระบบสร้าง Excel
+       ↓
+User ตรวจ / แก้ / ใช้งานต่อ
+```
+
+---
+
+## 21.4 Database เป็น Source of Truth
+
+Excel เป็น Output / Working File
+
+ไม่ใช่ Database
+
+```text
+Database
+   ↓
+Calculation
+   ↓
+Web
+   ↓
+Excel
+```
+
+---
+
+## 21.5 ตรวจ Impact ก่อนแก้
+
+ทุกการแก้ไข โดยเฉพาะ Shared Function / Shared Template / Exporter ต้องตรวจ:
+
+* ใครเรียกใช้
+* ถูกใช้ใน Flow ไหน
+* มี Dependency กับไฟล์ไหน
+* มีผลกับ Production หรือ Logistic หรือไม่
+* มีผลกับ Template Version หรือไม่
+* มีผลกับ Web หรือ Excel หรือไม่
+
+**ไม่แก้แบบ isolated โดยไม่ตรวจ Cross-file Dependency**
+
+---
+
+# 22. Important Development Lessons
+
+## Schema Migration
+
+เมื่อแก้ `sql/schema.sql` ต้องทดสอบอย่างน้อย 3 กรณี:
+
+1. Database ที่มีข้อมูลอยู่แล้ว
+2. Run Schema ซ้ำกับ Database เดิม
+3. Fresh Database
+
+เพราะ `schema.sql` ต้องรองรับทั้ง migration และ fresh installation
+
+---
+
+## Excel Cell Clearing
+
+ใน OpenPyXL:
+
+```python
+ws.cell(row, col).value = None
+```
+
+ใช้สำหรับเคลียร์ค่าที่มีอยู่จริง
+
+ไม่ควรตีความ `cell(value=None)` ว่าเป็นการเคลียร์ค่าเสมอไป
+
+---
+
+## End-to-End Testing
+
+Feature ที่ผ่านการทดสอบแยกกันไม่ได้แปลว่า Full Workflow จะไม่มี Bug
+
+ควรมีการทดสอบแบบ:
+
+```text
+Import PO
+   ↓
+Duplicate Check
+   ↓
+Location Resolve
+   ↓
+Product Resolve
+   ↓
+Buffer
+   ↓
+Create Plan
+   ↓
+View Plan
+   ↓
+Edit Buffer
+   ↓
+Recalculate
+   ↓
+Download Excel
+```
+
+---
+
+# 23. Project Philosophy
+
+โปรเจกต์นี้ไม่ได้มีเป้าหมายเพียง:
+
+> "สร้าง Excel อัตโนมัติ"
+
+แต่มีเป้าหมายเพื่อ:
+
+> **ลดงาน Manual ที่ไม่จำเป็น โดยให้ระบบเข้ามาช่วยใน Workflow ที่ผู้ใช้งานทำอยู่แล้ว**
+
+ผู้ใช้งานยังเป็นผู้ตัดสินใจ
+
+ระบบทำหน้าที่:
+
+* จัดข้อมูล
+* ตรวจสอบ
+* คำนวณ
+* สร้างผลลัพธ์
+* ลดงานซ้ำ
+* ลดความผิดพลาด
+* ทำให้ข้อมูลตรวจสอบย้อนหลังได้ง่ายขึ้น
+
+และเมื่อ Business Workflow เปลี่ยน ระบบควรสามารถปรับตาม Workflow ได้โดยไม่สร้างข้อจำกัดใหม่ให้ผู้ใช้งานโดยไม่จำเป็น

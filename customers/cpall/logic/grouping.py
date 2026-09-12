@@ -8,6 +8,7 @@ grouping.py — Module 2: Grouping + Reconciliation
     python -m src.grouping <po_import_id>
 """
 import sys
+from datetime import timedelta
 
 from customers.cpall.logic.db import get_connection
 
@@ -15,6 +16,8 @@ from customers.cpall.logic.db import get_connection
 class ReconciliationError(Exception):
     pass
 
+class DuplicateSubLocationError(Exception):
+    pass
 
 class InactiveSkuOrderedError(Exception):
     """PO รอบนี้สั่งสินค้าที่ถูกปิดใช้งาน (is_active=False) ใน Django Admin อยู่ — ต้องไป active
@@ -177,35 +180,133 @@ def get_dates_for_po_import(po_import_id: int):
         conn.close()
 
 
-def get_dates_by_sub_location(po_import_ids) -> dict:
+MORNING_GROUP_NAME = "รอบเช้าต่างจังหวัด"
+
+
+def get_plan_date_context(po_import_ids) -> dict:
     """
-    คืน {sub_location: (production_date, po_date)} — หาว่าจุดส่งย่อยแต่ละจุดมีข้อมูลอยู่ใน po_import_id
-    ตัวไหน (ในบรรดาที่ระบุมา) แล้วดึงวันที่ของรอบนั้นมาผูกให้ ใช้ตอนสร้างไฟล์ที่รวมหลายรอบเข้าด้วยกัน
-    (เช่น Production Plan) ที่แต่ละคอลัมน์อาจต้องโชว์วันที่คนละชุดกัน เพราะมาจากคนละรอบ PO
+    Resolve วันที่ของ Plan จาก PO ที่เลือก
+
+    Business rule:
+    - มี Afternoon → ใช้วันที่จริง
+    - ไม่มี Afternoon → fallback จาก Morning
+        production_date = morning production_date - 1 วัน
+        po_date = morning po_date
+
+    - มี Morning → ใช้วันที่จริง
+    - ไม่มี Morning → fallback จาก Afternoon
+        production_date = afternoon po_date
+        po_date = afternoon po_date
     """
     if isinstance(po_import_ids, int):
         po_import_ids = [po_import_ids]
 
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT DISTINCT lm.sub_location, pl.po_import_id
-                FROM po_line pl
-                JOIN location_mapping lm ON pl.fc_code = lm.fc_code
-                WHERE pl.po_import_id = ANY(%s)
-                """,
-                (po_import_ids,),
-            )
-            sub_location_to_import_id = {r[0]: r[1] for r in cur.fetchall()}
-    finally:
-        conn.close()
+    from customers.cpall.models import LocationMapping, PoLine
 
-    result = {}
-    for sub_loc, import_id in sub_location_to_import_id.items():
-        result[sub_loc] = get_dates_for_po_import(import_id)
-    return result
+    rows = list(
+        PoLine.objects
+        .filter(po_import_id__in=po_import_ids)
+        .values("po_import_id", "fc_code")
+        .distinct()
+    )
+
+    fc_codes = {row["fc_code"] for row in rows}
+
+    group_by_fc = dict(
+        LocationMapping.objects
+        .filter(fc_code__in=fc_codes)
+        .values_list("fc_code", "group")
+    )
+
+    afternoon_import_ids = set()
+    morning_import_ids = set()
+
+    for row in rows:
+        group_name = group_by_fc.get(row["fc_code"])
+
+        if group_name == MORNING_GROUP_NAME:
+            morning_import_ids.add(row["po_import_id"])
+        else:
+            afternoon_import_ids.add(row["po_import_id"])
+
+    def resolve_round_dates(import_ids):
+        if not import_ids:
+            return None
+
+        dates = {
+            get_dates_for_po_import(import_id)
+            for import_id in import_ids
+        }
+
+        dates.discard((None, None))
+
+        if not dates:
+            return None
+
+        if len(dates) > 1:
+            raise ValueError(
+                f"พบวันที่มากกว่า 1 ชุดใน PO รอบเดียวกัน: {sorted(dates)}"
+            )
+
+        return next(iter(dates))
+
+    afternoon_dates = resolve_round_dates(afternoon_import_ids)
+    morning_dates = resolve_round_dates(morning_import_ids)
+
+    if afternoon_dates is None and morning_dates is not None:
+        morning_production_date, morning_po_date = morning_dates
+
+        if morning_production_date is not None and morning_po_date is not None:
+            afternoon_dates = (
+                morning_production_date - timedelta(days=1),
+                morning_po_date,
+            )
+
+    if morning_dates is None and afternoon_dates is not None:
+        _, afternoon_po_date = afternoon_dates
+
+        if afternoon_po_date is not None:
+            morning_dates = (
+                afternoon_po_date,
+                afternoon_po_date,
+            )
+
+    return {
+        "afternoon": afternoon_dates,
+        "morning": morning_dates,
+    }
+
+# ไม่ได้ใช้แล้ว — แทนด้วย get_plan_date_context() ใน logistic_plan_export.py
+# แทนที่เพราะต้องการให้มันเป็นวันที่ตามรอบเย็นรอบเช้า
+# def get_dates_by_sub_location(po_import_ids) -> dict:
+#     """
+#     คืน {sub_location: (production_date, po_date)} — หาว่าจุดส่งย่อยแต่ละจุดมีข้อมูลอยู่ใน po_import_id
+#     ตัวไหน (ในบรรดาที่ระบุมา) แล้วดึงวันที่ของรอบนั้นมาผูกให้ ใช้ตอนสร้างไฟล์ที่รวมหลายรอบเข้าด้วยกัน
+#     (เช่น Production Plan) ที่แต่ละคอลัมน์อาจต้องโชว์วันที่คนละชุดกัน เพราะมาจากคนละรอบ PO
+#     """
+#     if isinstance(po_import_ids, int):
+#         po_import_ids = [po_import_ids]
+
+#     conn = get_connection()
+#     try:
+#         with conn.cursor() as cur:
+#             cur.execute(
+#                 """
+#                 SELECT DISTINCT lm.sub_location, pl.po_import_id
+#                 FROM po_line pl
+#                 JOIN location_mapping lm ON pl.fc_code = lm.fc_code
+#                 WHERE pl.po_import_id = ANY(%s)
+#                 """,
+#                 (po_import_ids,),
+#             )
+#             sub_location_to_import_id = {r[0]: r[1] for r in cur.fetchall()}
+#     finally:
+#         conn.close()
+
+#     result = {}
+#     for sub_loc, import_id in sub_location_to_import_id.items():
+#         result[sub_loc] = get_dates_for_po_import(import_id)
+#     return result
 
 
 def reconcile(po_import_ids) -> dict:
@@ -281,3 +382,40 @@ if __name__ == "__main__":
         for m in result["mismatches"]:
             print(f"    - {m['barcode']}: PO={m['po_total']} vs grouped={m['grouped_total']}")
         raise ReconciliationError("ยอดไม่ตรงกัน ต้องแก้ไขก่อนไปทำ Production Plan")
+
+
+def check_duplicate_sub_locations(po_import_ids) -> list[dict]:
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    lm.sub_location,
+                    array_agg(
+                        DISTINCT pl.po_import_id
+                        ORDER BY pl.po_import_id
+                    ) AS po_import_ids
+                FROM po_line pl
+                JOIN location_mapping lm
+                    ON pl.fc_code = lm.fc_code
+                WHERE pl.po_import_id = ANY(%s)
+                GROUP BY lm.sub_location
+                HAVING COUNT(DISTINCT pl.po_import_id) > 1
+                ORDER BY lm.sub_location
+                """,
+                (po_import_ids,),
+            )
+
+            return [
+                {
+                    "sub_location": row[0],
+                    "po_import_ids": row[1],
+                }
+                for row in cur.fetchall()
+            ]
+    finally:
+        conn.close()

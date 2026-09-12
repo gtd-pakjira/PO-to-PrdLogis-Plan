@@ -23,7 +23,7 @@ def get_required_columns() -> list:
     """
     คอลัมน์ที่ต้องมีใน PO Export — ถ้าไม่ครบ ให้หยุดทันที (ตาม FR-1 / UC-1 exception)
 
-    เดิม hardcode เป็น list ตรงๆ ในโค้ด แล้วย้ายไป YAML แล้วย้ายมาเป็นตารางนี้แทน (2025-09-05) —
+    เดิม hardcode เป็น list ตรงๆ ในโค้ด แล้วย้ายไป YAML แล้วย้ายมาเป็นตารางนี้แทน (2026-09-05) —
     ให้ Admin แก้ผ่านหน้า Django Admin panel ได้ตรงๆ ไม่ต้องแตะไฟล์/โค้ด/deploy ใหม่เลย — query จาก DB
     สดทุกครั้งที่เรียก (ไม่ cache) ให้ Admin แก้แล้วเห็นผลทันที
     """
@@ -56,6 +56,20 @@ def _json_safe(value):
     if hasattr(value, "strftime"):  # pandas.Timestamp และอื่นๆ ที่มีเมธอดนี้แต่ไม่ใช่ subclass ของ datetime
         return value.strftime("%d/%m/%Y")
     return value
+
+
+def _safe_str_strip(series):
+    """
+    แปลงคอลัมน์เป็น string + strip โดยรักษาค่าว่างเปล่า (NaN/None) ไว้เป็น None จริงๆ
+
+    *** เจอบั๊กจริง (2026-09-10) ***: เดิมใช้ `series.astype(str).str.strip()` ตรงๆ — แต่
+    `astype(str)` แปลง NaN เป็น "ตัวอักษร" string "nan" (ไม่ใช่ NaN จริง) เพราะงั้น
+    `df.dropna(subset=["po_number", "barcode"])` ที่ใช้ตัดแถวว่าง/สรุปท้ายไฟล์ทิ้ง **ไม่เคยตัดอะไร
+    ออกได้เลยจริงๆ ตั้งแต่แรก** (isna() คืน False เสมอเพราะเจอ string "nan" ไม่ใช่ NaN) — ไม่เคยถูก
+    สังเกตเห็นมานานเพราะไฟล์ PO จริงจาก CP All ไม่เคยมีแถวที่ barcode ว่างเปล่าเป๊ะจริงๆ จนมาเจอตอน
+    เขียน unit test ทดสอบ edge case นี้โดยเฉพาะ — ต้องเช็ค NaN ก่อนแปลงเป็น string เสมอ
+    """
+    return series.apply(lambda v: str(v).strip() if pd.notna(v) else None)
 
 
 def _to_date(value):
@@ -118,14 +132,14 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
     # เปลี่ยนชื่อคอลัมน์ที่มีอยู่แล้วในระบบผ่าน Admin panel (ไม่ใช่แค่เพิ่ม/ลบคอลัมน์ใหม่) การดึงข้อมูล
     # แถวนี้จะยังหาคอลัมน์ชื่อเดิมไม่เจอ — ต้องแก้โค้ดตรงนี้คู่กันเสมอถ้าจะรองรับ Admin เปลี่ยนชื่อคอลัมน์
     # ที่มีอยู่แล้วจริงๆ (ยังไม่ได้ทำ เพราะเป็น refactor ใหญ่กว่านี้มาก)
-    out["po_number"] = df["Purchase Order Number"].astype(str).str.strip()
+    out["po_number"] = _safe_str_strip(df["Purchase Order Number"])
     out["po_date"] = df["Purchase Order Date"].apply(_to_date)
     out["delivery_date"] = df["Delivery Date"].apply(_to_date)
     out["delivery_time"] = df["Delivery Time"].astype(str)
-    out["fc_code"] = df["Delivery Location Number"].astype(str).str.strip()
+    out["fc_code"] = _safe_str_strip(df["Delivery Location Number"])
     out["delivery_location"] = df["Delivery Location"]
     out["line_no"] = pd.to_numeric(df["Line Item Number"], errors="coerce")
-    out["barcode"] = df["Item Number (Product Code)"].astype(str).str.strip()
+    out["barcode"] = _safe_str_strip(df["Item Number (Product Code)"])
     out["item_name"] = df["Item Name "]
     out["qty_ordered"] = pd.to_numeric(df["Ordered Quantity"], errors="coerce")
     out["unit_type"] = df["Unit Type "]
@@ -143,7 +157,7 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
     out = out[out["po_number"].str.strip() != ""]
 
     # เช็คว่าตัวเลขไม่เกินขอบเขตที่ database รองรับ (NUMERIC(10,2) เก็บได้สูงสุด 99,999,999.99) — เจอ
-    # บั๊กจริงจากการทดสอบ (2025-09-06): ถ้าไฟล์ PO มีค่าเกินขอบเขตนี้ (เช่น พิมพ์ตัวเลขผิดเพิ่มเลขศูนย์
+    # บั๊กจริงจากการทดสอบ (2026-09-06): ถ้าไฟล์ PO มีค่าเกินขอบเขตนี้ (เช่น พิมพ์ตัวเลขผิดเพิ่มเลขศูนย์
     # เกิน) ระบบจะ crash ตอนเขียนลง database ด้วย raw error ของ PostgreSQL เอง ("DataError: numeric
     # field overflow") ซึ่งไม่มีทางเป็นมิตรกับ Admin เลย (เป็นภาษาเทคนิคล้วนๆ) — เช็คตรงนี้ก่อนเพื่อ
     # แจ้ง error ที่อ่านเข้าใจได้แทน (ไม่น่าเกิดขึ้นจริงในข้อมูล CP All ปกติ แต่ป้องกันไว้เผื่อพิมพ์ผิด)
@@ -178,7 +192,7 @@ def parse_po_file(filepath: str) -> pd.DataFrame:
 
     out.attrs["column_order"] = original_column_order
 
-    # ไฟล์ที่มีแค่หัวตาราง ไม่มีข้อมูลจริงเลยสักแถว — เจอจากการทดสอบ (2025-09-06): เดิม import "สำเร็จ"
+    # ไฟล์ที่มีแค่หัวตาราง ไม่มีข้อมูลจริงเลยสักแถว — เจอจากการทดสอบ (2026-09-06): เดิม import "สำเร็จ"
     # แบบเงียบๆ (0 แถว) แล้วยังกดสร้างแผนต่อได้ กลายเป็นแผนเปล่าที่ไม่มี SKU ไหนเลย ไม่มีประโยชน์อะไร
     # แต่ก็ไม่ error เตือนเลย — เพิ่ม validation ตรงนี้กันเผลออัปโหลดไฟล์ผิด (เช่น เลือกไฟล์ทดสอบ/ไฟล์
     # เปล่าผิดพลาด) ให้รู้ตัวทันทีตอน import แทนที่จะไปเจอทีหลังตอนดูแผนที่ว่างเปล่า

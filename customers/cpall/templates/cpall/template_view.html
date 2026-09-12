@@ -4,11 +4,31 @@
 {% block content %}
 
 <div class="mb-5">
-    <a href="{% url 'cpall:template_list' %}" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับหน้าจัดการ Template</a>
+    <a href="{{ back_url }}"
+    class="text-sm text-stone-500 hover:text-stone-700">
+        &larr; {{ back_label }}
+    </a>
     <div class="flex items-center justify-between mt-1">
         <h1 class="text-xl font-semibold text-stone-900">{{ grid.label }}</h1>
+        {% if version_view %}
+        <p class="text-xs text-stone-400 mt-1">
+            Version {{ version.version_number }}
+            {% if version.is_active %}
+            · ใช้งานอยู่
+            {% endif %}
+        </p>
+        {% endif %}
+        {% if version_view %}
+        <a href="{% url 'cpall:template_version_download' key version.id %}"
+        class="text-sm text-emerald-700 hover:underline font-medium">
+            ดาวน์โหลด Excel
+        </a>
+        {% else %}
         <a href="{% url 'cpall:template_download' key %}"
-           class="text-sm text-emerald-700 hover:underline font-medium">ดาวน์โหลด Excel</a>
+        class="text-sm text-emerald-700 hover:underline font-medium">
+            ดาวน์โหลด Excel
+        </a>
+        {% endif %}
     </div>
     <p class="text-xs text-stone-400 mt-1">โหมดดูอย่างเดียว — เห็นสูตรจริงในไฟล์ (ไม่ใช่ค่าที่คำนวณแล้ว) แก้ไขไม่ได้ตรงนี้</p>
 </div>

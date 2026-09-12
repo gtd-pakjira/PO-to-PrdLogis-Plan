@@ -1,0 +1,16 @@
+<!-- Tab header ใช้ร่วมกันระหว่างหน้า Template Group (template_list.html) กับหน้า Template Versions
+     (template_version_list.html) — เป็น server-side navigation จริง (คลิกแล้ว navigate ไป URL อื่น
+     เลย) ไม่ใช่ JS toggle เพราะทั้งระบบไม่มี SPA-like tab switching ที่ไหนเลย ให้สอดคล้องกับ pattern
+     เดิม (full page navigation / HTMX partial swap) -->
+<div class="mb-5 border-b border-stone-200 flex gap-6">
+    <a href="{% url 'cpall:template_list' %}"
+       class="pb-2.5 text-sm font-medium border-b-2 transition
+              {% if active_tab == 'group' %}border-stone-800 text-stone-900{% else %}border-transparent text-stone-400 hover:text-stone-600{% endif %}">
+        Template Group
+    </a>
+    <a href="{% url 'cpall:template_version_list' %}"
+       class="pb-2.5 text-sm font-medium border-b-2 transition
+              {% if active_tab == 'versions' %}border-stone-800 text-stone-900{% else %}border-transparent text-stone-400 hover:text-stone-600{% endif %}">
+        Template Versions
+    </a>
+</div>

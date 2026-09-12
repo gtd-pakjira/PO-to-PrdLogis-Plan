@@ -1,0 +1,61 @@
+{% extends "cpall/base.html" %}
+{% block nav_template %}active{% endblock %}
+{% block title %}Template Versions — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+{% include "cpall/_template_tabs.html" with active_tab="versions" %}
+
+<div class="mb-6">
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">Template Versions</h1>
+    <p class="text-sm text-stone-500 mt-1">
+        ดาวน์โหลดไปแก้ไข (เพิ่มคอลัมน์ PO, เพิ่มแถวรหัสสินค้า, กรอกยอดเผื่อ ฯลฯ) แล้วอัปโหลดกลับเข้ามาแทนที่ได้เลย
+        — ระบบจะตรวจโครงสร้างไฟล์ก่อนเสมอ ถ้าผิดจะไม่ยอมให้แทนที่ และเก็บทุกเวอร์ชันไว้ถาวร ย้อนกลับไปเวอร์ชันไหนก็ได้
+    </p>
+    <!-- <p class="text-sm text-stone-500 mt-2">
+        อยากเพิ่ม/ปิดใช้งานกลุ่มพื้นที่ (แพลนกระจาย) เอง ไม่ต้องแก้โค้ด?
+        <a href="/admin/cpall/logisticgroup/" class="text-emerald-700 hover:underline font-medium">จัดการกลุ่มพื้นที่ที่นี่ →</a>
+    </p> -->
+</div>
+
+<div class="grid gap-3 w-full max-w-3xl">
+    {% for t in templates %}
+    <div class="bg-white rounded-lg border border-stone-200 px-4 py-4">
+        <div class="flex items-center justify-between mb-3">
+            <div>
+                <p class="text-sm font-medium text-stone-900">{{ t.label }}</p>
+                {% if t.exists %}
+                <p class="text-xs text-stone-400 mt-0.5">
+                    เวอร์ชัน {{ t.active_version }} จากทั้งหมด {{ t.total_versions }}
+                    &middot; ใช้ตั้งแต่ {{ t.uploaded_at|date:"d/m/Y H:i" }}
+                </p>
+                {% else %}
+                <p class="text-xs text-red-500 mt-0.5">ไม่พบไฟล์นี้ในระบบ</p>
+                {% endif %}
+            </div>
+            {% if t.exists %}
+            <div class="flex items-center gap-3 shrink-0">
+                <a
+                    href="{% url 'cpall:template_view' t.key %}"
+                    class="text-sm text-stone-600 hover:text-stone-900 font-medium"
+                >
+                    ดู Template
+                </a>
+
+                <a href="{% url 'cpall:template_versions' t.key %}"
+                   class="text-sm text-stone-600 hover:text-stone-900 font-medium">ประวัติเวอร์ชัน</a>
+                
+                <a href="{% url 'cpall:template_download' t.key %}"
+                   class="text-sm text-emerald-700 hover:underline font-medium">ดาวน์โหลด</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <p class="text-xs text-stone-400 border-t border-stone-100 pt-2.5">
+            อัปโหลดไฟล์ใหม่และเปลี่ยนเวอร์ชันที่ใช้งานจริง ทำผ่านแท็บ
+            <a href="{% url 'cpall:template_list' %}" class="text-stone-600 hover:underline font-medium">Template Group</a>
+        </p>
+    </div>
+    {% endfor %}
+</div>
+
+{% endblock %}

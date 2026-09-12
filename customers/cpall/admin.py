@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import LocationMapping, LogisticGroup, PoRequiredColumn, ProductionPlanConfig, ProductMaster
+from .models import LocationMapping, LogisticGroup, PoRequiredColumn, ProductionPlanConfig, ProductMaster, Vehicle
 
 
 @admin.register(ProductMaster)
@@ -45,6 +45,26 @@ class LogisticGroupAdmin(admin.ModelAdmin):
     def get_exclude(self, request, obj=None):
         # ระบบตอนนี้มีลูกค้าเดียว (cpall) — ไม่ต้องให้ Admin เลือก customer เองทุกครั้งที่เพิ่มกลุ่ม
         # ใหม่ (ไม่มีประโยชน์ มีตัวเลือกเดียวอยู่แล้ว) ซ่อน field นี้แล้ว auto-fill ให้แทน (ดู save_model)
+        return ("customer",)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.customer_id:
+            from customers.cpall.logic.db import get_cpall_customer_id
+            obj.customer_id = get_cpall_customer_id()
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(Vehicle)
+class VehicleAdmin(admin.ModelAdmin):
+    """รายชื่อรถที่มีจริง — Admin เพิ่ม/ปิดใช้งานเองได้ (2026-09-12) ไม่ผูกกับกลุ่มพื้นที่ใดๆ เพราะ
+    รถคันเดียวใช้วิ่งกลุ่มไหนก็ได้ เลือกอิสระตอนดูแผนแต่ละครั้ง"""
+    list_display = ("plate_number", "vehicle_size", "basket_capacity", "is_active")
+    list_editable = ("is_active",)
+    list_filter = ("vehicle_size", "is_active")
+    search_fields = ("plate_number",)
+    ordering = ("basket_capacity",)
+
+    def get_exclude(self, request, obj=None):
         return ("customer",)
 
     def save_model(self, request, obj, form, change):

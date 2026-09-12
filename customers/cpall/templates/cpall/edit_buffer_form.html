@@ -4,16 +4,40 @@
 {% block content %}
 
 <div class="mb-6">
-    <a href="{% url 'cpall:view_plan' plan_run_id %}" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับไปหน้าแผน</a>
+    <a href="{% if add_po_mode %}{% url 'cpall:add_po_form' plan_run_id %}{% else %}{% url 'cpall:view_plan' plan_run_id %}{% endif %}"
+       class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับ</a>
+    {% if add_po_mode %}
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">ยอดเผื่อ — {{ plan_name }}</h1>
+    <p class="text-sm text-stone-500 mt-1">
+        ยอดเผื่อปัจจุบันของแผนนี้ใส่ไว้ให้แล้ว ถ้าไม่ต้องแก้อะไร กด "เพิ่ม PO และคำนวณใหม่" ได้เลย
+    </p>
+    {% else %}
     <h1 class="text-xl font-semibold text-stone-900 mt-1">แก้ไขยอดเผื่อ — {{ plan_name }}</h1>
     <p class="text-sm text-stone-500 mt-1">
         แก้แล้วบันทึก ระบบจะคำนวณแผนนี้ใหม่ทั้งหมดทันที (Production Plan + Logistic Plan ทุกกลุ่ม)
         ด้วยยอดเผื่อชุดใหม่ — ไม่สร้างแผนใหม่ ใช้แผนเดิมนี้ต่อ
     </p>
+    {% endif %}
 </div>
 
-<form hx-post="{% url 'cpall:edit_buffer_form_submit' plan_run_id %}" hx-swap="none" class="max-w-2xl">
+{% if add_po_mode %}
+<div class="mb-5 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 max-w-2xl">
+    <p class="text-xs font-medium text-stone-600 mb-1.5">PO ที่กำลังจะเพิ่มเข้าแผนนี้</p>
+    <div class="flex flex-wrap gap-2">
+        {% for po in new_pos %}
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-white border border-stone-200 px-3 py-1 text-xs text-stone-700">
+            {{ po.display_filename }}
+            <span class="text-stone-400">({{ po.production_date|date:"d/m" }} &rarr; {{ po.po_date|date:"d/m" }})</span>
+        </span>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<form hx-post="{% if add_po_mode %}{% url 'cpall:add_po_submit' plan_run_id %}{% else %}{% url 'cpall:edit_buffer_form_submit' plan_run_id %}{% endif %}"
+      {% if not add_po_mode %}hx-swap="none"{% else %}hx-target="body" hx-swap="outerHTML"{% endif %} class="max-w-2xl">
     {% csrf_token %}
+    {% if add_po_mode %}<input type="hidden" name="new_po_ids_str" value="{{ new_po_ids_str }}">{% endif %}
 
     <div class="bg-white rounded-lg border border-stone-200 overflow-hidden mb-5">
         <table class="w-full text-sm">
@@ -42,7 +66,7 @@
     <button type="submit"
             class="rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-800 transition disabled:opacity-70"
             hx-disabled-elt="this">
-        บันทึกและคำนวณใหม่
+        {% if add_po_mode %}เพิ่ม PO และคำนวณใหม่{% else %}บันทึกและคำนวณใหม่{% endif %}
     </button>
 </form>
 

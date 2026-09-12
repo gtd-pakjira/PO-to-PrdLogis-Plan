@@ -9,6 +9,11 @@
         <h1 class="text-xl font-semibold text-stone-900 mt-1">{{ plan_name }}</h1>
     </div>
     <div class="flex items-center gap-2 mt-6 shrink-0">
+        <a href="{% url 'cpall:add_po_form' plan.id %}"
+           class="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-600 hover:border-stone-400 transition">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            เพิ่ม PO
+        </a>
         <a href="{% url 'cpall:edit_buffer_form' plan.id %}"
            class="inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-600 hover:border-stone-400 transition">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -35,6 +40,8 @@
         {% endfor %}
     </div>
 </div>
+
+{% include "cpall/_plan_note.html" %}
 
 {% if skipped_skus %}
 <div class="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
@@ -81,12 +88,17 @@
             {% else %}
             <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-100 text-red-700 text-sm">✕</span>
             {% endif %}
-            <div>
-                <p class="text-sm font-medium text-stone-900">{{ lp.group_name }}</p>
+            <div class="flex-1">
+                <p class="text-sm font-medium text-stone-900">
+                    แพลนกระจาย — {{ lp.group_name }}
+                    {% if lp.total_basket %}<span class="text-stone-400 text-xs">({{ lp.total_basket }} ตะกร้า)</span>{% endif %}
+                </p>
                 {% if lp.status == 'skipped' %}
                 <p class="text-xs text-stone-400 mt-0.5">ยังไม่มีข้อมูลรอบนี้</p>
                 {% elif lp.status == 'failed' %}
                 <p class="text-xs text-red-600 mt-0.5">{{ lp.error_message }}</p>
+                {% elif lp.status == 'success' %}
+                {% include "cpall/_plan_vehicle.html" with plan_run_id=plan.id %}
                 {% endif %}
             </div>
         </div>

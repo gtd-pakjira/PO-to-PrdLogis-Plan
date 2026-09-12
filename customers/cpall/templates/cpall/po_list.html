@@ -3,6 +3,22 @@
 {% block nav_po %}active{% endblock %}
 {% block content %}
 
+<div
+    x-data
+    x-init="
+        {% if import_warning %}
+            setTimeout(() => {
+                $dispatch('toast', {
+                    message: '{{ import_warning.message|escapejs }}',
+                    level: 'warning',
+                    detail_url: '{{ import_warning.detail_url|escapejs }}'
+                });
+            }, 300);
+        {% endif %}
+    "
+>
+</div>
+
 <div class="mb-5">
     <h1 class="text-xl font-semibold text-stone-900">PO ทั้งหมด</h1>
     <p class="text-sm text-stone-500 mt-0.5">นำเข้า PO ใหม่ หรือ ติ๊กเลือก PO ที่ต้องการ แล้วกดสร้างแผน</p>

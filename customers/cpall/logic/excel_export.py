@@ -17,14 +17,14 @@ import sys
 
 import openpyxl
 
-from customers.cpall.logic.date_utils import find_merged_date_header_column, update_date_headers
-from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location
+from customers.cpall.logic.date_utils import update_date_headers
+from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location, get_plan_date_context
 from customers.cpall.logic.logistic_plan_export import SUB_LOCATION_LABEL_CORRECTIONS
 
 TEMPLATE_PATH = "customers/cpall/excel_templates/production_plan_template.xlsx"
 def get_sheet_name() -> str:
     """
-    ชื่อ sheet ในไฟล์เทมเพลต Production Plan — เดิม hardcode เป็น constant ตรงๆ (2025-09-05 ย้ายมา
+    ชื่อ sheet ในไฟล์เทมเพลต Production Plan — เดิม hardcode เป็น constant ตรงๆ (2026-09-05 ย้ายมา
     query จาก ProductionPlanConfig แทน) ให้ Admin แก้ผ่าน Django Admin panel ได้ถ้าเทมเพลตเปลี่ยนชื่อ
     sheet ไม่ต้องแก้โค้ด/deploy ใหม่ — query สดทุกครั้งที่เรียก ไม่ cache
     """
@@ -56,7 +56,7 @@ IGNORE_HEADER_LABELS = {"บาร์ระบุวันผลิต"}
 # เทมเพลตเดิมพิมพ์ชื่อจุดส่งย่อยไม่ตรงกับที่ตั้งไว้ใน location_mapping.yaml (ย่อ/พิมพ์ตก) — แก้ให้
 # ตรงกันตรงนี้ — เดิมนิยาม dict นี้ซ้ำอีกชุดใน logistic_plan_export.py (คนละเนื้อหา ไม่ตรงกัน — ทำให้
 # เจอชื่อพิมพ์ผิดใหม่แล้วต้องจำไปแก้ 2 ที่ ลืมง่ายมาก) — รวมเป็นที่เดียวที่ logistic_plan_export.py
-# (มีรายการครบกว่า) แล้ว import มาใช้ตรงนี้แทน (2025-09-05) — ดู import ที่ต้นไฟล์
+# (มีรายการครบกว่า) แล้ว import มาใช้ตรงนี้แทน (2026-09-05) — ดู import ที่ต้นไฟล์
 
 # บาร์โค้ดที่เทมเพลตพิมพ์ผิด/สลับกับ SKU อื่น (พบระหว่างสร้าง sku_master.yaml)
 LEGACY_TEMPLATE_BARCODE_CORRECTIONS = {
@@ -113,7 +113,8 @@ def _find_sku_header_rows(ws) -> dict:
         if not barcode_cell:
             continue
 
-        m = re.match(r"\s*(\d{10,14})", str(barcode_cell))
+        # m = re.match(r"\s*(\d{10,14})", str(barcode_cell))
+        m = re.match(r"\s*['\"]?(\d{10,14})", str(barcode_cell))
         if not m:
             continue
         raw_barcode = m.group(1)
@@ -127,6 +128,89 @@ def _find_sku_header_rows(ws) -> dict:
         mapping[corrected] = row
 
     return mapping
+
+def find_po_barcodes_missing_in_template(
+    po_import_ids,
+    template_path: str = TEMPLATE_PATH,
+) -> list[dict]:
+    """
+    ตรวจสอบ Barcode ของ PO ที่เลือกกับ Production Template ที่ใช้งานอยู่
+
+    คืนเฉพาะ Barcode ที่มีอยู่ใน PO แต่ไม่พบใน Production Template
+    โดยไม่สนว่า Barcode นั้นมีหรือไม่มีใน ProductMaster
+    """
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    from customers.cpall.models import PoLine
+
+    po_rows = (
+        PoLine.objects
+        .filter(po_import_id__in=po_import_ids)
+        .order_by("barcode", "id")
+        .values("barcode", "item_name")
+        .distinct("barcode")
+    )
+
+    wb = openpyxl.load_workbook(template_path)
+    try:
+        ws = wb[get_sheet_name()]
+        template_barcodes = set(_find_sku_header_rows(ws))
+    finally:
+        wb.close()
+
+    return [
+        {
+            "barcode": row["barcode"],
+            "product_name": row["item_name"],
+        }
+        for row in po_rows
+        if row["barcode"] not in template_barcodes
+    ]
+
+def find_po_sub_locations_missing_in_template(
+    po_import_ids,
+    template_path: str = TEMPLATE_PATH,
+) -> list[str]:
+    """
+    ตรวจสอบ Location ของ PO ที่เลือกกับ Production Template ที่ใช้งานอยู่
+
+    PO ใช้ fc_code -> LocationMapping -> sub_location
+    แล้วตรวจว่า sub_location ที่ PO ต้องการ มีอยู่ใน Template ครบหรือไม่
+
+    ไม่บังคับว่า Template ต้องมีทุก Location ใน LocationMapping
+    และไม่สนจำนวนคอลัมน์ที่ซ้ำกันของ sub_location
+    """
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    from customers.cpall.models import LocationMapping, PoLine
+
+    po_fc_codes = (
+        PoLine.objects
+        .filter(po_import_id__in=po_import_ids)
+        .values_list("fc_code", flat=True)
+        .distinct()
+    )
+
+    required_sub_locations = set(
+        LocationMapping.objects
+        .filter(fc_code__in=po_fc_codes)
+        .exclude(sub_location__isnull=True)
+        .exclude(sub_location="")
+        .values_list("sub_location", flat=True)
+    )
+
+    wb = openpyxl.load_workbook(template_path)
+    try:
+        ws = wb[get_sheet_name()]
+        template_sub_locations = set(
+            _find_sub_location_columns(ws).values()
+        )
+    finally:
+        wb.close()
+
+    return sorted(required_sub_locations - template_sub_locations)
 
 def _renumber_visible_sku_rows(ws, header_rows: dict) -> int:
     """
@@ -278,10 +362,13 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
     (เช่น ตอน Admin กรอกยอดเผื่อผ่านหน้าเว็บเอง — ดู UC-4) ถ้าไม่ระบุ (None) จะ fallback ไปอ่านจากเทมเพลต
     เหมือนเดิม (behavior เดิมที่จำลอง Admin กรอกไว้ในไฟล์)
     """
-    from customers.cpall.logic.grouping import get_covered_sub_locations, get_dates_by_sub_location
+    from customers.cpall.logic.grouping import (
+        get_covered_sub_locations,
+    )
+
     sub_location_qty = get_grouped_quantities_by_sub_location(po_import_ids)
     covered_sub_locations = get_covered_sub_locations(po_import_ids)
-    dates_by_sub_location = get_dates_by_sub_location(po_import_ids)
+    date_context = get_plan_date_context(po_import_ids)
 
     # จัดรูปเป็น {barcode: {sub_location: qty}}
     qty_by_barcode = {}
@@ -293,45 +380,35 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
 
     col_to_sub_location = _find_sub_location_columns(ws)
 
+    from customers.cpall.models import LocationMapping
+
+    sub_locations = set(col_to_sub_location.values())
+
+    group_by_sub_location = dict(
+        LocationMapping.objects
+        .filter(sub_location__in=sub_locations)
+        .values_list("sub_location", "group")
+    )
+
     def date_resolver(col):
-        """หาว่าคอลัมน์นี้ (หัว 'วันที่...') สังกัดจุดส่งย่อยไหน แล้วคืนวันที่ของรอบที่จุดนั้นสังกัด
-        (เซลล์หัว 'วันที่' อยู่คอลัมน์เดียวกับจุดส่งย่อยแรกใต้หัวนั้นเสมอ เพราะเป็น merged cell)"""
         sub_loc = col_to_sub_location.get(col)
-        if sub_loc is None or sub_loc not in dates_by_sub_location:
+
+        if sub_loc is None:
             return None
-        production_date, po_date = dates_by_sub_location[sub_loc]
-        if production_date is None or po_date is None:
-            return None
-        return production_date, po_date
+
+        group_name = group_by_sub_location.get(sub_loc)
+
+        if group_name == "รอบเช้าต่างจังหวัด":
+            return date_context["morning"]
+
+        return date_context["afternoon"]
 
     n = update_date_headers(ws, date_resolver)
-    print(f"[excel_export] อัปเดตวันที่ในหัวไฟล์ {n} จุด (แต่ละจุดใช้วันที่ของรอบ PO ที่ตัวเองสังกัด)")
 
-    # M5 (หัวไฟล์หลัก "วันที่ผลิต ... ส่งวันที่ PO ...") ไม่ได้ผูกกับจุดส่งย่อยไหนโดยเฉพาะ (เป็น header
-    # รวมทั้งไฟล์) — date_resolver ด้านบน (ที่ผูกกับ col_to_sub_location) จึงไม่เคยแก้ M5 เลย ยังคงเป็น
-    # ค่าเก่าที่ติดมากับเทมเพลตตลอด (เจอบั๊กนี้จริงจากการทดสอบ) — ใช้วันที่ของ "รอบบ่าย" เสมอ (ยืนยันกับ
-    # Admin แล้วว่ารอบเช้าต่างจังหวัดมาถึงวันเดียวกับวันที่ PO ของรอบบ่าย จึงใช้รอบบ่ายเป็นตัวแทนของทั้งไฟล์)
-    from customers.cpall.logic.plan_view_data import get_return_group_sub_locations
-    return_group_sub_locations = get_return_group_sub_locations()
-    afternoon_dates = None
-    for sub_loc, dates in dates_by_sub_location.items():
-        if sub_loc not in return_group_sub_locations and dates[0] is not None and dates[1] is not None:
-            afternoon_dates = dates
-            break
-    if afternoon_dates is not None:
-        # กรองเอาเฉพาะ merged "วันที่" ที่ column ตรงกับจุดส่งกลุ่มรอบเช้า (RETURN_GROUP) เท่านั้น —
-        # เทมเพลตนี้มี merged "วันที่" มากกว่า 1 จุด (G5:L6 ของรอบบ่าย ถูกต้องอยู่แล้วเพราะ date_resolver
-        # ด้านบนจัดการให้ตรงกับจุดส่งจริง กับ M5:Q6 ของรอบเช้าที่เป็นจุดมีปัญหา) — ถ้าไม่กรองจะได้ค่า
-        # merged range แรกที่เจอ (G5:L6) แทนที่จะเป็นตัวที่ต้องการแก้จริง (M5:Q6)
-        m5_col = find_merged_date_header_column(
-            ws, row=5, col_filter=lambda c: col_to_sub_location.get(c) in return_group_sub_locations,
-        )
-        if m5_col is not None:
-            m5_updated = update_date_headers(
-                ws, lambda col: afternoon_dates if col == m5_col else None,
-                search_rows=range(1, 8), search_cols=range(m5_col, m5_col + 1),
-            )
-            print(f"[excel_export] อัปเดต M5 (หัวไฟล์หลัก) ด้วยวันที่รอบบ่าย: {m5_updated} จุด")
+    print(
+        f"[excel_export] อัปเดตวันที่ในหัวไฟล์ {n} จุด "
+        f"(แต่ละจุดใช้วันที่ของรอบ PO ที่ตัวเองสังกัด)"
+    )
 
     total_col = _find_total_column(ws)
     header_rows = _find_sku_header_rows(ws)
@@ -406,7 +483,7 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
         msg_lines = [f"พบ {len(missing_in_template)} สินค้า ที่มีออเดอร์จริงใน PO แต่หาแถวใน Template ไม่เจอ:"]
         for b in missing_in_template:
             msg_lines.append(f"    - {b}")
-        msg_lines.append(f"  -> ไปเพิ่มแถว SKU นี้ในไฟล์เทมเพลต {template_path} ก่อน (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วรันใหม่")
+        msg_lines.append("  -> ไปเพิ่มแถว สินค้า นี้ในไฟล์เทมเพลตก่อน (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วทำแผนใหม่อีกครั้ง")
         raise ExcelExportError("\n".join(msg_lines))
 
     # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในรอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต —

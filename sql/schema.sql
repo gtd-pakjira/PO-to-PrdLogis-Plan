@@ -124,7 +124,8 @@ CREATE TABLE IF NOT EXISTS plan_run (
     output_dir              TEXT NOT NULL,
     production_plan_path    TEXT,
     production_plan_status  VARCHAR(20) DEFAULT 'success',
-    production_plan_error   TEXT
+    production_plan_error   TEXT,
+    note                    TEXT           -- หมายเหตุที่ Admin จดกำกับแผนไว้เอง (เช่น "รอบเช้าเพิ่มทีหลัง")
 );
 
 CREATE TABLE IF NOT EXISTS plan_run_import (
@@ -179,7 +180,7 @@ BEGIN
 END $$;
 
 -- ---------- config ของ Production Plan (เดิม SHEET_NAME hardcode เป็น "แพลน 7-11" ในโค้ด — ย้ายมาไว้
--- นี่แทน 2025-09-05) — มีแค่แถวเดียวต่อลูกค้า (Production Plan เป็นเทมเพลตเดียว ไม่ใช่หลายกลุ่มแบบ
+-- นี่แทน 2026-09-05) — มีแค่แถวเดียวต่อลูกค้า (Production Plan เป็นเทมเพลตเดียว ไม่ใช่หลายกลุ่มแบบ
 -- Logistic Plan) — Admin แก้ชื่อ sheet ผ่าน Django Admin panel ได้ถ้าเทมเพลตเปลี่ยนชื่อ sheet ----------
 CREATE TABLE IF NOT EXISTS production_plan_config (
     id              SERIAL PRIMARY KEY,
@@ -270,6 +271,47 @@ ALTER TABLE template_version ADD COLUMN IF NOT EXISTS original_filename TEXT;
 ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS production_template_version_id INTEGER
     REFERENCES template_version(id);
 
+-- หมายเหตุของแผน (Add PO feature — 2026-09-12) — ให้ Admin จดกำกับแผนไว้เองได้ เช่น "รอบเช้าเพิ่ม
+-- ทีหลัง" / "แก้ยอดตามที่ฝ่ายผลิตแจ้ง" — CREATE TABLE ด้านบนมีคอลัมน์นี้แล้วก็จริง แต่บรรทัดนั้นทำงาน
+-- เฉพาะตอน fresh install เท่านั้น (IF NOT EXISTS guard) database ที่มีอยู่แล้วต้องอาศัย ALTER ตรงนี้
+-- เสมอ — บทเรียนจากบั๊ก updated_at ที่เคยขาด ALTER แล้วทำให้ Django Admin พังทั้งหน้า (2026-09-10)
+ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS note TEXT;
+
+-- ---------- Template Group (Feature 1 — 2026-09-10) ----------
+-- จัดกลุ่ม TemplateVersion (Production 1 ตัว + Logistic หลายตัว) ให้เป็น "ชุด" เดียวกัน กัน Admin
+-- เผลอเอา Production กับ Logistic คนละรอบมาใช้คู่กัน — ตอน Activate Group จะสลับ is_active ของทุก
+-- TemplateVersion สมาชิกในกลุ่มพร้อมกันทีเดียว (atomic) แทนที่จะ activate ทีละไฟล์แบบเดิม
+--
+-- TemplateVersion ตัวเดียวถูก reuse ในหลาย Group ได้ (เช่น Production v5 ยังใช้เหมือนเดิม แต่เปลี่ยน
+-- แค่ Logistic บางกลุ่ม) เพราะงั้นใช้ M2M ผ่านตารางกลาง (template_group_item) ไม่ผูกตรงๆ
+--
+-- กติกาที่ enforce ผ่าน Python เท่านั้น (ไม่ใช่ DB constraint — ตาม pattern เดียวกับ
+-- TemplateVersion.is_active ด้านบนที่บังคับผ่าน template_manager.py):
+--   - is_active=True มีได้แค่ 1 group ต่อ customer
+--   - 1 group มี Production Template ได้ไม่เกิน 1 ตัว (เช็คจาก template_version.template_key ตอน
+--     บันทึก ไม่ใช่ DB constraint เพราะต้อง join ข้ามตาราง)
+CREATE TABLE IF NOT EXISTS template_group (
+    id              SERIAL PRIMARY KEY,
+    customer_id     INTEGER NOT NULL REFERENCES customer(id),
+    name            VARCHAR(100) NOT NULL,
+    note            TEXT,
+    is_active       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMP DEFAULT now(),
+    activated_at    TIMESTAMP,              -- อัปเดตทุกครั้งที่กด "ใช้ชุดนี้" สำเร็จ — ไว้โชว์ในหน้า list
+    UNIQUE (customer_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_template_group_customer ON template_group(customer_id);
+
+CREATE TABLE IF NOT EXISTS template_group_item (
+    id                      SERIAL PRIMARY KEY,
+    template_group_id       INTEGER NOT NULL REFERENCES template_group(id) ON DELETE CASCADE,
+    template_version_id     INTEGER NOT NULL REFERENCES template_version(id),
+    created_at              TIMESTAMP DEFAULT now(),
+    UNIQUE (template_group_id, template_version_id)
+);
+CREATE INDEX IF NOT EXISTS idx_template_group_item_group ON template_group_item(template_group_id);
+CREATE INDEX IF NOT EXISTS idx_template_group_item_version ON template_group_item(template_version_id);
+
 -- ฐานข้อมูลที่เคยรัน schema.sql เวอร์ชันก่อนหน้ามาแล้ว (มี po_import/po_line อยู่แล้วแบบไม่มีคอลัมน์
 -- เก็บข้อมูลครบทุกคอลัมน์ของไฟล์ต้นฉบับ) เพิ่มคอลัมน์ให้ — ค่าเก่าที่มีอยู่แล้วจะเป็น NULL (แผน/PO เก่า
 -- ก่อนมีระบบนี้ยังใช้งานได้ปกติ แค่ regenerate ไฟล์แบบครบทุกคอลัมน์ไม่ได้ ต้อง fallback อย่างอื่นแทน)
@@ -301,6 +343,50 @@ END $$;
 ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS template_version_id INTEGER
     REFERENCES template_version(id);
 
+-- ---------- Vehicle / เลือกรถ (2026-09-12) ----------
+-- รายชื่อรถที่มีจริง (ทะเบียน + ความจุตะกร้า + ขนาด) — ให้ Admin จัดการผ่าน Django Admin ได้ตรงๆ
+-- ไม่ผูกกับ LogisticGroup เพราะรถคันเดียวใช้วิ่งกลุ่มไหนก็ได้ (เลือกอิสระต่อแผนแต่ละครั้ง)
+CREATE TABLE IF NOT EXISTS vehicle (
+    id              SERIAL PRIMARY KEY,
+    customer_id     INTEGER NOT NULL REFERENCES customer(id),
+    plate_number    VARCHAR(20) NOT NULL,
+    basket_capacity INTEGER NOT NULL,
+    vehicle_size    VARCHAR(30) NOT NULL,   -- เช่น "4ล้อ", "6ล้อใหญ่", "10ล้อ" — ใช้ group รถที่ขนาดเดียวกัน
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMP DEFAULT now(),
+    UNIQUE (customer_id, plate_number)
+);
+CREATE INDEX IF NOT EXISTS idx_vehicle_customer ON vehicle(customer_id);
+
+-- ข้อมูลรถจริง 8 คัน (จากไฟล์ "ความจุรถ-ตระกร้าเซเว่น.xlsx" — 2026-09-12) — ON CONFLICT DO NOTHING
+-- กันซ้ำถ้ารัน schema.sql ซ้ำ (Admin แก้ไข/เพิ่มรถเองทีหลังผ่าน Django Admin ได้ ไม่กระทบ seed ชุดนี้)
+DO $$
+DECLARE
+    cpall_id INTEGER;
+BEGIN
+    SELECT id INTO cpall_id FROM customer WHERE code = 'cpall';
+    IF cpall_id IS NOT NULL THEN
+        INSERT INTO vehicle (customer_id, plate_number, basket_capacity, vehicle_size)
+        VALUES
+            (cpall_id, '2ฒอ 2841', 138, '4ล้อ'),
+            (cpall_id, '2ฒอ 2847', 138, '4ล้อ'),
+            (cpall_id, 'ฌช2448', 230, '4ล้อ จัมโบ้'),
+            (cpall_id, '83-9382', 295, '6ล้อ เล็ก'),
+            (cpall_id, '83-8096', 525, '6ล้อใหญ่'),
+            (cpall_id, '83-7977', 525, '6ล้อใหญ่'),
+            (cpall_id, '83-8521', 872, '10ล้อ'),
+            (cpall_id, '83-8522', 872, '10ล้อ')
+        ON CONFLICT (customer_id, plate_number) DO NOTHING;
+    END IF;
+END $$;
+
+-- เลือกรถต่อ (แผน, กลุ่ม logistic) — ทุกช่องไม่บังคับเลย (Admin ไม่เลือกอะไรเลยก็ได้ ไฟล์จะไม่มี
+-- "ผู้ส่ง" เขียนทับ ปล่อยเป็นค่าเดิมจากเทมเพลต) vehicle_size แยกเก็บต่างหากจาก vehicle เพราะ Admin
+-- อาจจะเลือกแค่ "ขนาดรถ" (ที่ระบบแนะนำให้) โดยยังไม่รู้ทะเบียนจริง (คนละ workflow กับตอนรู้ทะเบียนแล้ว)
+ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS vehicle_size VARCHAR(30);
+ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS vehicle_id INTEGER REFERENCES vehicle(id);
+ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS driver_name VARCHAR(100);
+
 CREATE INDEX IF NOT EXISTS idx_plan_run_import_run ON plan_run_import(plan_run_id);
 CREATE INDEX IF NOT EXISTS idx_plan_run_logistic_run ON plan_run_logistic_file(plan_run_id);
 
@@ -308,6 +394,17 @@ CREATE INDEX IF NOT EXISTS idx_plan_run_logistic_run ON plan_run_logistic_file(p
 -- จุดส่งเลิกใช้ ไม่ต้องลบทิ้ง แค่ปิดไว้) ค่าเดิมทั้งหมดเป็น TRUE อัตโนมัติ ไม่กระทบข้อมูลเดิมเลย
 ALTER TABLE product_master ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE location_mapping ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- *** CRITICAL FIX (2026-09-10) — updated_at ขาด migration มาตั้งแต่ต้น ***
+-- product_master/location_mapping มี "updated_at" อยู่ใน CREATE TABLE statement ด้านบนแล้ว (บรรทัด
+-- ~56, ~70) แต่บรรทัดนั้นทำงานแค่ตอน "fresh install" เท่านั้น (ผ่าน IF NOT EXISTS guard) —
+-- database ที่เคย migrate ผ่านมาก่อนหน้านี้แล้ว (มี table อยู่แล้ว) จะไม่มี column นี้เลย เพราะไม่เคยมี
+-- ALTER TABLE คู่กันมาก่อน (ต่างจาก is_active ด้านบนที่ทำถูกต้อง) — เจอบั๊กร้ายแรงจากการตรวจสอบ dev
+-- branch: Django Admin's list_display ของ ProductMaster/LocationMapping ใส่ "updated_at" ไว้ด้วย ทำให้
+-- หน้า Admin (ที่ใช้เปิด/ปิดสินค้าทุกวัน) crash ทันทีที่เปิดถ้า database เป็นเวอร์ชันเก่าที่เคย migrate
+-- มาก่อน — เพิ่ม migration ที่ขาดหายไปตรงนี้ (รันซ้ำได้ปลอดภัย ไม่กระทบข้อมูลเดิม)
+ALTER TABLE product_master ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();
+ALTER TABLE location_mapping ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();
 
 -- ---------- ผลลัพธ์ต่อ SKU/คอลัมน์ (Phase 1.6 sub-phase 2) ----------
 -- "1 แถว = 1 SKU x 1 คอลัมน์" (เช่น "บางบัวทอง" หรือ "ชลบุรี PO2") — เก็บยอดสั่งจริง (ไม่ใช่จากสูตร
@@ -465,6 +562,13 @@ ALTER TABLE logistic_group ENABLE ROW LEVEL SECURITY;
 ALTER TABLE logistic_group FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS customer_isolation ON logistic_group;
 CREATE POLICY customer_isolation ON logistic_group
+    USING (customer_id::text = current_setting('app.current_customer_id', true))
+    WITH CHECK (customer_id::text = current_setting('app.current_customer_id', true));
+
+ALTER TABLE vehicle ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vehicle FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS customer_isolation ON vehicle;
+CREATE POLICY customer_isolation ON vehicle
     USING (customer_id::text = current_setting('app.current_customer_id', true))
     WITH CHECK (customer_id::text = current_setting('app.current_customer_id', true));
 

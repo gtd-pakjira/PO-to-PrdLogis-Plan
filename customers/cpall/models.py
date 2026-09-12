@@ -153,7 +153,7 @@ class LogisticGroup(models.Model):
             raise ValidationError({"template_key": "ต้องขึ้นต้นด้วย 'logistic_' เสมอ (เช่น 'logistic_ระยอง')"})
 
         # ตรวจ unique (customer, group_name) เอง ก่อนจะไปชนกับ database constraint ตรงๆ — เจอบั๊กจริง
-        # (2025-09-06): customer field ถูกซ่อนจากฟอร์ม Django Admin (ดู get_exclude ด้านล่าง) ทำให้
+        # (2026-09-06): customer field ถูกซ่อนจากฟอร์ม Django Admin (ดู get_exclude ด้านล่าง) ทำให้
         # Django ModelForm's built-in unique validation มองไม่เห็น customer เลย ตรวจ unique ไม่ได้
         # ตอน form validation จนไปชน database constraint ตรงๆ ตอน save().save_model() แล้ว crash เป็น
         # raw IntegrityError (500 error ทั้งหน้า ไม่มี error message สวยงามให้ Admin เห็นเลย)
@@ -193,6 +193,67 @@ class TemplateVersion(models.Model):
         return f"{self.template_key} v{self.version_number}"
 
 
+class TemplateGroup(models.Model):
+    """
+    จัดกลุ่ม TemplateVersion (Production 1 ตัว + Logistic หลายตัว) ให้เป็น "ชุด" เดียวกัน (Feature 1)
+    — ตอน Activate จะสลับ is_active ของทุก TemplateVersion สมาชิกในกลุ่มพร้อมกันทีเดียว กัน Admin
+    เผลอเอา Production กับ Logistic คนละรอบมาใช้คู่กัน
+
+    is_active=True มีได้แค่ 1 group ต่อ customer — enforce ผ่าน Python (template_manager.py) เท่านั้น
+    เหมือนกับ TemplateVersion.is_active ด้านบน ไม่ใช่ DB constraint
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
+    name = models.CharField(max_length=100, verbose_name="ชื่อชุด")
+    note = models.TextField(blank=True, null=True, verbose_name="หมายเหตุ")
+    is_active = models.BooleanField(default=False, verbose_name="ใช้งานอยู่")
+    created_at = models.DateTimeField(auto_now_add=True)
+    activated_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table = "template_group"
+        managed = False
+        verbose_name = "ชุด Template"
+        verbose_name_plural = "ชุด Template"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["customer", "name"], name="template_group_customer_name_key"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class TemplateGroupItem(models.Model):
+    """
+    สมาชิกของ TemplateGroup — ตารางกลาง (M2M) ระหว่าง TemplateGroup กับ TemplateVersion เพราะ
+    TemplateVersion ตัวเดียวถูก reuse ในหลาย Group ได้ (เช่น Production v5 ยังใช้เหมือนเดิม แต่
+    เปลี่ยนแค่ Logistic บางกลุ่มในอีก Group หนึ่ง)
+    """
+    template_group = models.ForeignKey(
+        TemplateGroup, on_delete=models.CASCADE, db_column="template_group_id",
+        related_name="items",
+    )
+    template_version = models.ForeignKey(
+        TemplateVersion, on_delete=models.CASCADE, db_column="template_version_id",
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "template_group_item"
+        managed = False
+        verbose_name = "สมาชิกชุด Template"
+        verbose_name_plural = "สมาชิกชุด Template"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["template_group", "template_version"], name="template_group_item_group_version_key",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.template_group.name} — {self.template_version}"
+
+
 class PlanRun(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -200,6 +261,7 @@ class PlanRun(models.Model):
     production_plan_path = models.TextField(blank=True, null=True)
     production_plan_status = models.CharField(max_length=20, default="success")
     production_plan_error = models.TextField(blank=True, null=True)
+    note = models.TextField(blank=True, null=True, verbose_name="หมายเหตุ")
     po_imports = models.ManyToManyField(PoImport, through="PlanRunImport", related_name="plan_runs")
     production_template_version = models.ForeignKey(
         TemplateVersion, on_delete=models.SET_NULL, db_column="production_template_version_id",
@@ -285,6 +347,32 @@ class PlanSkuResult(models.Model):
         return f"{self.barcode} — {self.column_label}"
 
 
+class Vehicle(models.Model):
+    """
+    รถที่มีจริง (ทะเบียน + ความจุตะกร้า + ขนาด) — Admin จัดการผ่าน Django Admin (2026-09-12)
+    ไม่ผูกกับ LogisticGroup เพราะรถคันเดียวใช้วิ่งกลุ่มไหนก็ได้ เลือกอิสระต่อแผนแต่ละครั้ง
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
+    plate_number = models.CharField(max_length=20, verbose_name="ทะเบียนรถ")
+    basket_capacity = models.IntegerField(verbose_name="ความจุตะกร้า")
+    vehicle_size = models.CharField(max_length=30, verbose_name="ขนาดรถ")
+    is_active = models.BooleanField(default=True, verbose_name="ใช้งานอยู่")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "vehicle"
+        managed = False
+        verbose_name = "รถ"
+        verbose_name_plural = "รถ"
+        constraints = [
+            models.UniqueConstraint(fields=["customer", "plate_number"], name="vehicle_customer_plate_key"),
+        ]
+        ordering = ["basket_capacity"]
+
+    def __str__(self):
+        return f"{self.plate_number} ({self.vehicle_size}, {self.basket_capacity} ตะกร้า)"
+
+
 class PlanRunLogisticFile(models.Model):
     plan_run = models.ForeignKey(PlanRun, on_delete=models.CASCADE, db_column="plan_run_id",
                                   related_name="logistic_files")
@@ -296,6 +384,13 @@ class PlanRunLogisticFile(models.Model):
         TemplateVersion, on_delete=models.SET_NULL, db_column="template_version_id",
         blank=True, null=True, related_name="+",
     )
+    # เลือกรถ (2026-09-12) — ทุกช่องไม่บังคับ (Admin ไม่เลือกอะไรเลยก็ได้)
+    vehicle_size = models.CharField(max_length=30, blank=True, null=True, verbose_name="ขนาดรถ")
+    vehicle = models.ForeignKey(
+        Vehicle, on_delete=models.SET_NULL, db_column="vehicle_id",
+        blank=True, null=True, related_name="+", verbose_name="ทะเบียนรถ",
+    )
+    driver_name = models.CharField(max_length=100, blank=True, null=True, verbose_name="คนขับ")
 
     class Meta:
         db_table = "plan_run_logistic_file"
@@ -310,7 +405,7 @@ class PlanRunLogisticFile(models.Model):
 class PoRequiredColumn(models.Model):
     """
     คอลัมน์ที่ต้องมีในไฟล์ PO Export จาก CP All (เดิม hardcode ในโค้ด แล้วย้ายไป YAML แล้วย้ายมาเป็น
-    ตารางนี้แทน 2025-09-05 — ให้ Admin แก้ผ่านหน้า Django Admin ได้ตรงๆ ไม่ต้องแตะไฟล์/โค้ดเลย) —
+    ตารางนี้แทน 2026-09-05 — ให้ Admin แก้ผ่านหน้า Django Admin ได้ตรงๆ ไม่ต้องแตะไฟล์/โค้ดเลย) —
     ถ้า CP All เปลี่ยนชื่อคอลัมน์ในไฟล์ export ของเขา Admin มาแก้ที่นี่ได้เลย
 
     หมายเหตุ: ไม่ต้องพิมพ์ช่องว่างต่อท้ายชื่อคอลัมน์เอง แม้ไฟล์ต้นฉบับจริงจะมีช่องว่างต่อท้ายบางชื่อ
@@ -338,7 +433,7 @@ class PoRequiredColumn(models.Model):
     def clean(self):
         # ตรวจ unique (customer, column_name) เอง — เหตุผลเดียวกับ LogisticGroup.clean() (customer
         # field ถูกซ่อนจากฟอร์ม Django Admin ทำให้ built-in unique validation มองไม่เห็น ไปชน database
-        # constraint ตรงๆ แล้ว crash เป็น raw IntegrityError แทน — 2025-09-06)
+        # constraint ตรงๆ แล้ว crash เป็น raw IntegrityError แทน — 2026-09-06)
         if self.column_name:
             from django.core.exceptions import ValidationError
 
@@ -353,7 +448,7 @@ class PoRequiredColumn(models.Model):
 
 class ProductionPlanConfig(models.Model):
     """
-    ตั้งค่าของ Production Plan (เดิม SHEET_NAME hardcode ในโค้ด แล้วย้ายมาที่นี่แทน 2025-09-05) —
+    ตั้งค่าของ Production Plan (เดิม SHEET_NAME hardcode ในโค้ด แล้วย้ายมาที่นี่แทน 2026-09-05) —
     มีแค่แถวเดียวต่อลูกค้า (Production Plan เป็นเทมเพลตเดียว ไม่ใช่หลายกลุ่มแบบ Logistic Plan)
     """
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, db_column="customer_id")
@@ -374,7 +469,7 @@ class ProductionPlanConfig(models.Model):
 
     def clean(self):
         # เผื่อกรณีแปลกๆ ที่ Admin เข้าหน้า "เพิ่ม" ตรงๆ ผ่าน URL (ข้าม has_add_permission ที่ซ่อนปุ่ม
-        # ไว้แล้วปกติ) — ป้องกัน IntegrityError แบบเดียวกับ LogisticGroup/PoRequiredColumn (2025-09-06)
+        # ไว้แล้วปกติ) — ป้องกัน IntegrityError แบบเดียวกับ LogisticGroup/PoRequiredColumn (2026-09-06)
         if not self.pk and ProductionPlanConfig.objects.exists():
             from django.core.exceptions import ValidationError
             raise ValidationError("มีตั้งค่า Production Plan อยู่แล้ว แก้ไขแถวที่มีอยู่แทนการเพิ่มใหม่")

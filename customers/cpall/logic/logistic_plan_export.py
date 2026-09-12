@@ -28,7 +28,11 @@ from collections import defaultdict
 import openpyxl
 
 from customers.cpall.logic.date_utils import fixed_date_resolver, update_date_headers
-from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location_and_po
+from customers.cpall.logic.grouping import (
+    MORNING_GROUP_NAME,
+    get_grouped_quantities_by_sub_location_and_po,
+    get_plan_date_context,
+)
 
 
 def get_po_number_by_column_label(po_import_ids: list[int], group_name: str) -> dict:
@@ -138,6 +142,23 @@ def group_has_data(po_import_ids, group_name: str) -> bool:
     group_subs = _get_sub_locations_for_group(group_name)
     raw = get_grouped_quantities_by_sub_location_and_po(po_import_ids)
     return any(r["sub_location"] in group_subs for r in raw)
+
+
+def _find_driver_header_cell(ws, search_rows=range(1, 15), search_cols=range(1, 15)):
+    """
+    หาเซลล์ "ผู้ส่ง : ..." ในหัวไฟล์ (เลือกรถ feature — 2026-09-12) — ตำแหน่งไม่คงที่ในแต่ละไฟล์กลุ่ม
+    (เจอ B6, B4, C2, B10 ในไฟล์ตัวอย่างจริงต่างกันหมด เพราะเทมเพลตแต่ละกลุ่มแยกจัดทำเอง) ต้องสแกนหา
+    แบบ dynamic เสมอ ไม่ hardcode ตำแหน่ง
+
+    คืนค่า (row, col) หรือ None ถ้าไม่เจอเลย — ไม่ raise error เพราะเป็น field เสริม (Admin ไม่เลือก
+    รถเลยก็ได้) ถ้าเทมเพลตกลุ่มไหนไม่มีเซลล์นี้อยู่แต่แรก ก็แค่ไม่มีที่ให้เขียนทับ ปล่อยผ่านเงียบๆ
+    """
+    for row in search_rows:
+        for col in search_cols:
+            val = ws.cell(row=row, column=col).value
+            if val and isinstance(val, str) and val.strip().startswith("ผู้ส่ง"):
+                return row, col
+    return None
 
 
 def _find_line_no_column(ws, search_rows=range(1, 60), search_cols=range(1, 10)):
@@ -329,6 +350,33 @@ def _find_buffer_column(ws) -> int:
                 return col
     raise LogisticPlanError("หาคอลัมน์ 'ยอดเผื่อ' ในเทมเพลตนี้ไม่เจอ")
 
+def write_buffer_qty(
+    ws,
+    header_rows: dict,
+    buffer_by_barcode: dict,
+) -> int:
+    """
+    เขียนยอดเผื่อของ Logistic Plan
+    ใช้กับ Template ที่มีคอลัมน์ 'ยอดเผื่อ' เท่านั้น
+    """
+
+    buffer_col = _find_buffer_column(ws)
+    written = 0
+
+    for barcode, row in header_rows.items():
+        buffer_qty = buffer_by_barcode.get(barcode)
+
+        # ต้องใช้ .value = โดยตรง
+        # เพื่อให้ None สามารถล้างค่าที่ค้างจาก template ได้จริง
+        ws.cell(
+            row=row,
+            column=buffer_col,
+        ).value = buffer_qty
+
+        if buffer_qty is not None:
+            written += 1
+
+    return written
 
 def read_buffer_qty_from_template(group_name: str = "รอบเช้าต่างจังหวัด") -> dict:
     """
@@ -362,12 +410,172 @@ def read_buffer_qty_from_template(group_name: str = "รอบเช้าต่
 
     return result
 
+def validate_logistic_plan(po_import_ids, group_name: str) -> dict:
+    """
+    ตรวจสอบความพร้อมของ Logistic Plan สำหรับ Group นี้
+    โดยไม่สร้างหรือแก้ไขไฟล์ output
 
-def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
+    ตรวจ:
+    - Location
+    - PO Capacity
+    - Barcode
+    """
+    if isinstance(po_import_ids, int):
+        po_import_ids = [po_import_ids]
+
+    group_templates = get_group_templates()
+
+    if group_name not in group_templates:
+        raise LogisticPlanError(
+            f"ไม่รู้จักกลุ่มพื้นที่ '{group_name}' "
+            f"(ต้องเป็นหนึ่งใน {list(group_templates)})"
+        )
+
+    template_path, sheet_name = group_templates[group_name]
+
+    wb = openpyxl.load_workbook(template_path)
+    try:
+        ws = wb[sheet_name]
+
+        # ---------- ดึงข้อมูล PO ของ Group นี้ ----------
+        group_sub_locations = _get_sub_locations_for_group(group_name)
+
+        raw = get_grouped_quantities_by_sub_location_and_po(po_import_ids)
+        raw = [
+            row for row in raw
+            if row["sub_location"] in group_sub_locations
+        ]
+
+        # Group นี้ไม่มี PO → ไม่ต้อง validate / ไม่ต้องสร้างไฟล์
+        if not raw:
+            return {
+                "group_name": group_name,
+                "missing_sub_locations": [],
+                "missing_barcodes": [],
+                "overflow": [],
+            }
+
+        required_sub_locations = {
+            row["sub_location"]
+            for row in raw
+        }
+
+        ordered_barcodes = {
+            row["barcode"]
+            for row in raw
+        }
+
+        po_numbers_by_sub_location = defaultdict(set)
+
+        for row in raw:
+            po_numbers_by_sub_location[
+                row["sub_location"]
+            ].add(row["po_number"])
+
+        # ---------- อ่านโครงสร้าง Template ----------
+        line_no_col, header_row = _find_line_no_column(ws)
+        name_col = line_no_col + 1
+        qty_start_col = line_no_col + 3
+
+        qty_start_col, qty_end_col = _find_qty_column_range(
+            ws,
+            qty_start_col,
+            header_row,
+        )
+
+        # column -> (sub_location, po_index)
+        col_labels = {}
+        last_sub_location = None
+
+        for col in range(qty_start_col, qty_end_col + 1):
+            sub_loc, po_idx = _find_column_labels(
+                ws,
+                col,
+                header_row,
+            )
+
+            if sub_loc is None:
+                sub_loc = (
+                    last_sub_location
+                    if last_sub_location is not None
+                    else group_name
+                )
+
+            last_sub_location = sub_loc
+            col_labels[col] = (sub_loc, po_idx)
+
+        # Template ที่มีเพียง 1 PO column
+        if len(col_labels) == 1:
+            only_col = next(iter(col_labels))
+            sub_loc, po_idx = col_labels[only_col]
+
+            if po_idx is None:
+                col_labels[only_col] = (sub_loc, 1)
+
+        # จัดกลุ่มคอลัมน์ตาม sub_location
+        cols_by_sub_location = defaultdict(list)
+
+        for col, (sub_loc, po_idx) in col_labels.items():
+            cols_by_sub_location[sub_loc].append(
+                (po_idx, col)
+            )
+
+        for sub_loc in cols_by_sub_location:
+            cols_by_sub_location[sub_loc].sort(
+                key=lambda item: (item[0] is None, item[0])
+            )
+
+        template_sub_locations = set(
+            cols_by_sub_location.keys()
+        )
+
+        # ---------- 1. Location ----------
+        missing_sub_locations = sorted(
+            required_sub_locations - template_sub_locations
+        )
+
+        # ---------- 2. PO Capacity ----------
+        overflow = []
+
+        for sub_loc, po_numbers in po_numbers_by_sub_location.items():
+            available_cols = len(
+                cols_by_sub_location.get(sub_loc, [])
+            )
+
+            if len(po_numbers) > available_cols:
+                overflow.append(
+                    {
+                        "sub_location": sub_loc,
+                        "needed": len(po_numbers),
+                        "available": available_cols,
+                    }
+                )
+
+        # ---------- 3. Barcode ----------
+        header_rows = _find_sku_header_rows(ws, name_col)
+
+        missing_barcodes = sorted(
+            ordered_barcodes - set(header_rows.keys())
+        )
+
+        return {
+            "group_name": group_name,
+            "missing_sub_locations": missing_sub_locations,
+            "missing_barcodes": missing_barcodes,
+            "overflow": overflow,
+        }
+
+    finally:
+        wb.close()
+
+def export_logistic_plan(po_import_ids, group_name: str, output_path: str,buffer_override: dict = None, vehicle_info: dict = None,):
     """
     po_import_ids: รับได้ทั้ง int เดี่ยว หรือ list ของ int
     วันที่ในหัวไฟล์: ดึงจากวันที่ที่ผูกไว้กับรอบ PO ที่มีข้อมูลของกลุ่มนี้ (ไฟล์นี้มาจากรอบเดียวเสมอ
     ในทางปฏิบัติ เพราะจุดส่งย่อยของกลุ่มหนึ่งอยู่ในรอบ PO เดียวกันหมด)
+    vehicle_info: {"vehicle_size":, "vehicle_plate":, "driver_name":} หรือ None (เลือกรถ feature —
+    2026-09-12) — ไม่บังคับเลย ถ้า None หรือทุกช่องว่างหมด จะไม่แตะเซลล์ "ผู้ส่ง" เลย ปล่อยเป็นค่าเดิม
+    จากเทมเพลต (กันเขียนทับข้อมูลเก่าโดยไม่ตั้งใจตอนยังไม่ได้เลือกรถ)
     """
     if isinstance(po_import_ids, int):
         po_import_ids = [po_import_ids]
@@ -380,18 +588,24 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
     wb = openpyxl.load_workbook(template_path)
     ws = wb[sheet_name]
 
-    from customers.cpall.logic.grouping import get_dates_by_sub_location
-    group_sub_locations_for_dates = _get_sub_locations_for_group(group_name)
-    dates_by_sub_location = get_dates_by_sub_location(po_import_ids)
-    # เอาวันที่ของจุดส่งย่อยจุดแรกในกลุ่มนี้ที่มีข้อมูล (ทุกจุดในกลุ่มเดียวกันควรมาจากรอบเดียวกันอยู่แล้ว)
-    plan_dates = next(
-        (dates_by_sub_location[s] for s in group_sub_locations_for_dates if s in dates_by_sub_location),
-        (None, None),
-    )
-    if plan_dates[0] and plan_dates[1]:
-        n = update_date_headers(ws, fixed_date_resolver(*plan_dates))
-        print(f"[logistic_plan_export:{group_name}] อัปเดตวันที่ในหัวไฟล์ {n} จุด "
-              f"(ผลิต={plan_dates[0]}, PO={plan_dates[1]})")
+    date_context = get_plan_date_context(po_import_ids)
+
+    if group_name == MORNING_GROUP_NAME:
+        plan_dates = date_context["morning"]
+    else:
+        plan_dates = date_context["afternoon"]
+
+    if plan_dates is not None:
+        n = update_date_headers(
+            ws,
+            fixed_date_resolver(*plan_dates),
+        )
+
+        print(
+            f"[logistic_plan_export:{group_name}] "
+            f"อัปเดตวันที่ในหัวไฟล์ {n} จุด "
+            f"(ผลิต={plan_dates[0]}, PO={plan_dates[1]})"
+        )
 
     line_no_col, header_row = _find_line_no_column(ws)
     name_col = line_no_col + 1
@@ -462,6 +676,22 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
     }
 
     header_rows = _find_sku_header_rows(ws, name_col)
+
+    # ---------- ยอดเผื่อ ----------
+    # มีเฉพาะ Template "รอบเช้าต่างจังหวัด"
+    # ใช้ค่าที่ Admin กรอกผ่านเว็บเป็น source of truth
+    if group_name == "รอบเช้าต่างจังหวัด" and buffer_override is not None:
+        buffer_written = write_buffer_qty(
+            ws,
+            header_rows,
+            buffer_override,
+        )
+
+        print(
+            f"[logistic_plan_export:{group_name}] "
+            f"เขียนยอดเผื่อ {buffer_written} SKU"
+        )
+
     filled_skus, missing_in_template = set(), set()
 
     # สำคัญ: เคลียร์ทุกช่องยอดสั่ง (qty_start_col..qty_end_col) ของทุกแถว SKU ในเทมเพลตนี้ก่อนเขียนใหม่
@@ -498,7 +728,7 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
         msg_lines = [f"พบ {len(missing_in_template)} สินค้า ที่มีออเดอร์จริงใน PO แต่หาแถวในเทมเพลต '{template_path}' ไม่เจอ:"]
         for b in missing_in_template:
             msg_lines.append(f"    - {b}")
-        msg_lines.append("  -> ไปเพิ่มแถว SKU นี้ในไฟล์เทมเพลต (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วรันใหม่")
+        msg_lines.append("  -> ไปเพิ่มแถว สินค้า นี้ในไฟล์เทมเพลต (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วทำแผนใหม่อีกครั้ง")
         raise LogisticPlanError("\n".join(msg_lines))
 
     # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในกลุ่มนี้รอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต —
@@ -547,6 +777,24 @@ def export_logistic_plan(po_import_ids, group_name: str, output_path: str):
         f"[logistic_plan_export:{group_name}] "
         f"จัดเลขลำดับใหม่แล้ว {renumbered_count} SKU"
     )
+
+    # เขียนทับเซลล์ "ผู้ส่ง : ..." เสมอหลังสร้าง/regenerate แผน (เลือกรถ feature ต่อยอด — 2026-09-12)
+    # เดิมเช็คก่อนว่ามีข้อมูลรถไหมถึงจะเขียน แต่พอมี auto-suggest แล้วทุกกลุ่มที่มีข้อมูลจะมี
+    # vehicle_size เสมอ (ยกเว้น Admin ตั้งใจล้างออกเอง) — เขียนทับเสมอเพื่อไม่ให้ข้อมูลรถผิด/ค้างจาก
+    # เทมเพลตเดิม (ปัญหาเดิมที่ฟีเจอร์นี้ตั้งใจแก้) ค้างอยู่ได้อีกเลย ถ้าไม่มีข้อมูลอะไรเลยจริงๆ
+    # (Admin ล้างออกเอง) จะเหลือแค่ "ผู้ส่ง : 7-11 [กลุ่ม]" เฉยๆ ไม่ใช่ค่าเดิมจาก template
+    cell_pos = _find_driver_header_cell(ws)
+    if cell_pos:
+        row, col = cell_pos
+        parts = [f"ผู้ส่ง : 7-11 {group_name}"]
+        if vehicle_info:
+            if vehicle_info.get("vehicle_size"):
+                parts.append(vehicle_info["vehicle_size"])
+            if vehicle_info.get("vehicle_plate"):
+                parts.append(vehicle_info["vehicle_plate"])
+            if vehicle_info.get("driver_name"):
+                parts.append(vehicle_info["driver_name"])
+        ws.cell(row=row, column=col).value = " ".join(parts)
 
     wb.save(output_path)
 
