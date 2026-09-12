@@ -119,18 +119,7 @@ def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_ove
     # จะไม่มีข้อมูลสำหรับแผนนี้ — log ไว้ให้เห็นชัดเจนแทนที่จะทำให้ทั้ง request ล้ม)
     extracted_ok = _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_results)
 
-    # แนะนำขนาดรถอัตโนมัติทันทีตอนสร้างแผนครั้งแรก (เลือกรถ feature ต่อยอด — 2025-09-12) — ทำแค่ตอน
-    # สร้างแผนใหม่เท่านั้น (run_plan) ไม่ทำตอน recalculate เพราะ edit_buffer_and_regenerate() ไม่เรียก
-    # ตรงนี้เลย — ถ้า recalculate ไปเขียนทับด้วยจะลบค่าที่ Admin เคยเลือกเองไว้เงียบๆ (ตกลงกันไว้ว่า
-    # ไม่ทับ แค่เตือน) Admin ยังแก้ไขเองทีหลังได้เสมอถ้าไม่เห็นด้วยกับคำแนะนำ
-    for group_name, result in logistic_results.items():
-        if result["status"] != "success":
-            continue
-        suggested_size, _ = suggest_vehicle_size(plan_run_id, group_name)
-        if suggested_size:
-            PlanRunLogisticFile.objects.filter(
-                plan_run_id=plan_run_id, group_name=group_name,
-            ).update(vehicle_size=suggested_size)
+    _auto_suggest_missing_vehicles(plan_run_id, logistic_results)
 
     # ---------- ลบไฟล์ Excel ที่ extract ข้อมูลเข้า plan_sku_result สำเร็จแล้วทิ้ง (data-first เต็มรูป
     # แบบ) — เว็บอ่านจาก DB อยู่แล้ว ดาวน์โหลดก็ regenerate จาก DB+เทมเพลตใหม่ทุกครั้งอยู่แล้ว ไฟล์ที่
@@ -194,6 +183,33 @@ def _extract_and_save_sku_results(plan_run_id, production_plan_result, logistic_
         print(f"[plan_runner] บันทึกผลลัพธ์ลง plan_sku_result แล้ว {len(all_rows)} แถว (plan_run_id={plan_run_id})")
 
     return extracted_ok
+
+
+def _auto_suggest_missing_vehicles(plan_run_id, logistic_results):
+    """
+    แนะนำขนาดรถอัตโนมัติเฉพาะกลุ่มที่ "ยังไม่เคยมีค่า" (เลือกรถ feature — 2025-09-12, แก้บั๊ก 2025-09-12)
+
+    ใช้กฎเดียว "เติมเฉพาะช่องว่าง ไม่ทับของเดิม" ครอบคลุมทั้ง 2 สถานการณ์ในฟังก์ชันเดียว:
+      - สร้างแผนใหม่ (run_plan): ทุกกลุ่มยังไม่มีค่าเลย -> แนะนำหมดทุกกลุ่ม
+      - Recalculate (Add PO/แก้ยอดเผื่อ): กลุ่มที่มีค่าอยู่แล้ว (Admin เคยเลือกเอง) -> ข้ามไป ไม่ทับ
+        แต่กลุ่มที่ "เพิ่งมีข้อมูลครั้งแรก" (เพิ่งเปลี่ยนจาก skipped/failed -> success เพราะเพิ่ง Add PO
+        เข้ามาให้กลุ่มนั้น) ยังไม่เคยมีค่าเหมือนกัน -> ต้องได้รับการแนะนำเหมือนตอนสร้างแผนใหม่
+
+    *** เจอบั๊กจริง (2025-09-12) ***: เดิม auto-suggest ทำงานแค่ใน run_plan() เท่านั้น (ตั้งใจไม่ทำใน
+    edit_buffer_and_regenerate() เพื่อกันทับค่าที่ Admin เลือกเอง) แต่ผลคือกลุ่มที่เพิ่งมีข้อมูลครั้งแรก
+    จากการ Add PO (เช่น เอารอบบ่ายไปก่อน แล้วเพิ่มรอบเช้าทีหลัง — "รอบเช้าต่างจังหวัด" เพิ่งมีข้อมูล
+    ตอนนั้นเป็นครั้งแรก) ไม่เคยได้รับการแนะนำเลย ค้างเป็น None ตลอดไป ต้อง Admin เข้าไปเลือกเองเท่านั้น
+    """
+    for group_name, result in logistic_results.items():
+        if result["status"] != "success":
+            continue
+        lf = PlanRunLogisticFile.objects.filter(plan_run_id=plan_run_id, group_name=group_name).first()
+        if lf is None or lf.vehicle_size:
+            continue  # มีค่าอยู่แล้ว (Admin เคยเลือกเอง หรือเคยแนะนำไปแล้ว) — ไม่ทับ
+        suggested_size, _ = suggest_vehicle_size(plan_run_id, group_name)
+        if suggested_size:
+            lf.vehicle_size = suggested_size
+            lf.save(update_fields=["vehicle_size"])
 
 
 def _save_plan_run(po_import_ids, output_dir, production_plan_result, logistic_results) -> int:
@@ -281,6 +297,33 @@ def list_plan_runs(limit: int = 50) -> list[dict]:
     ]
 
 
+def _build_logistic_plan_summary(plan_run_id: int, lf) -> dict:
+    """
+    เตรียมข้อมูล 1 กลุ่ม logistic สำหรับหน้าแผน รวมคำแนะนำขนาดรถ + ข้อความเตือนถ้ายอดตะกร้าเกิน
+    ความจุรถที่ใหญ่ที่สุดที่มี (เลือกรถ feature ต่อยอด — 2025-09-12, แก้บั๊ก 2025-09-12)
+
+    *** เจอบั๊กจริง ***: เดิม suggest_vehicle_size() คืนค่า (None, total_basket) ถูกต้องอยู่แล้วเวลา
+    ไม่มีรถพอ (ไม่แนะนำมั่วๆ) แต่หน้าเว็บทิ้งค่า total_basket ไปเลย (ใช้แค่ index [0]) ทำให้ Admin เห็น
+    แค่ "ยังไม่ได้เลือกรถ" เฉยๆ เหมือนกรณี "ยังไม่เคยตั้งค่า" ทั่วไป ไม่รู้เลยว่าจริงๆ แล้วไม่มีรถคันไหน
+    ในระบบที่จุพอเลย ต้องแบ่งเป็นหลายคันเอง (ตามที่ตกลงกันไว้ว่าไม่ให้ระบบตัดสินใจแบ่งแทน)
+    """
+    summary = {
+        "group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
+        "error_message": lf.error_message,
+        "vehicle_size": lf.vehicle_size, "vehicle_id": lf.vehicle_id,
+        "vehicle_plate": lf.vehicle.plate_number if lf.vehicle else None,
+        "driver_name": lf.driver_name,
+        "suggested_vehicle_size": None, "capacity_overflow_basket": None,
+    }
+    if lf.status == "success":
+        suggested_size, total_basket = suggest_vehicle_size(plan_run_id, lf.group_name)
+        summary["suggested_vehicle_size"] = suggested_size
+        if suggested_size is None:
+            # ไม่มีรถคันไหนในระบบจุพอเลย (ไม่ใช่แค่ "ยังไม่ได้ตั้งค่า") — เก็บยอดจริงไว้บอก Admin ตรงๆ
+            summary["capacity_overflow_basket"] = total_basket
+    return summary
+
+
 def get_plan_run_detail(plan_run_id: int) -> dict | None:
     """ดึงรายละเอียดแผนที่สร้างไว้ 1 รายการ (ใช้แสดงหน้า ดูแผน)"""
     try:
@@ -308,19 +351,7 @@ def get_plan_run_detail(plan_run_id: int) -> dict | None:
 
     result["logistic_plans"] = sorted(
         [
-            {
-                "group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
-                "error_message": lf.error_message,
-                "vehicle_size": lf.vehicle_size, "vehicle_id": lf.vehicle_id,
-                "vehicle_plate": lf.vehicle.plate_number if lf.vehicle else None,
-                "driver_name": lf.driver_name,
-                # แนะนำขนาดรถจากยอดตะกร้าจริง (2025-09-12) — คำนวณสดทุกครั้ง ไม่ cache เพราะยอดอาจ
-                # เปลี่ยนได้ทุกครั้งที่ recalculate (Add PO / แก้ยอดเผื่อ) — คิดเฉพาะกลุ่มที่มีข้อมูลจริง
-                # (skipped/failed ไม่มี basket ให้แนะนำ)
-                "suggested_vehicle_size": (
-                    suggest_vehicle_size(plan_run_id, lf.group_name)[0] if lf.status == "success" else None
-                ),
-            }
+            _build_logistic_plan_summary(plan_run_id, lf)
             for lf in plan_run.logistic_files.all()
         ],
         key=lambda x: (display_orders.get(x["group_name"], 9999), x["group_name"]),
@@ -435,6 +466,13 @@ def edit_buffer_and_regenerate(plan_run_id: int, buffer_override: dict) -> dict:
             file_path=result["path"],
             error_message=result["error"],
         )
+
+    # แนะนำขนาดรถให้กลุ่มที่ "เพิ่งมีข้อมูลครั้งแรก" จากการ Add PO รอบนี้ (แก้บั๊ก 2025-09-12 — ดู
+    # docstring ของ _auto_suggest_missing_vehicles) — กลุ่มที่มีค่าอยู่แล้ว (Admin เคยเลือกเอง) จะไม่
+    # ถูกแตะเลย เพราะฟังก์ชันนี้เติมแค่ช่องว่างเท่านั้น ไฟล์ Excel ที่ export ไปแล้วด้านบนไม่ต้องกังวล
+    # เรื่อง timing เลย เพราะถูกลบทิ้งเป็นไฟล์ชั่วคราวอยู่ดี (ดูโค้ดด้านล่าง) — ตอน Admin กดดาวน์โหลด
+    # จริงจะ regenerate จาก DB สดใหม่เสมอ (regenerate_logistic_plan_bytes) ได้ค่าล่าสุดถูกต้องแน่นอน
+    _auto_suggest_missing_vehicles(plan_run_id, logistic_results)
 
     if "production" in extracted_ok and production_plan_result["path"] and os.path.exists(production_plan_result["path"]):
         os.remove(production_plan_result["path"])

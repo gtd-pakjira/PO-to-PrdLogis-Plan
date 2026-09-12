@@ -19,6 +19,8 @@
         <p class="text-xs text-stone-500">
             {% if lp.vehicle_size or lp.driver_name %}
                 🚚 {{ lp.vehicle_size|default:"" }}{% if lp.vehicle_plate %} — {{ lp.vehicle_plate }}{% endif %}{% if lp.driver_name %} ({{ lp.driver_name }}){% endif %}
+            {% elif lp.capacity_overflow_basket %}
+                <span class="text-red-600 font-medium">⚠ ยอด {{ lp.capacity_overflow_basket }} ตะกร้า เกินความจุรถที่ใหญ่ที่สุดที่มี — ต้องแบ่งเป็นหลายคันเอง</span>
             {% else %}
                 <span class="text-stone-400">ยังไม่ได้เลือกรถ</span>
             {% endif %}
