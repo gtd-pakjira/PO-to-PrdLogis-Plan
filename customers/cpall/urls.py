@@ -19,7 +19,7 @@ urlpatterns = [
     path("plan/<int:plan_run_id>/", views.view_plan, name="view_plan"),
     path("plan/<int:plan_run_id>/edit-buffer/", views.edit_buffer_form, name="edit_buffer_form"),
     path("plan/<int:plan_run_id>/edit-buffer/submit/", views.edit_buffer_form_submit, name="edit_buffer_form_submit"),
-    # Add PO — เพิ่ม PO เข้าแผนเดิม (2025-09-12)
+    # Add PO — เพิ่ม PO เข้าแผนเดิม (2026-09-12)
     path("plan/<int:plan_run_id>/add-po/", views.add_po_form, name="add_po_form"),
     path("plan/<int:plan_run_id>/add-po/buffer/", views.add_po_buffer, name="add_po_buffer"),
     path("plan/<int:plan_run_id>/add-po/submit/", views.add_po_submit, name="add_po_submit"),
@@ -56,9 +56,9 @@ urlpatterns = [
      path("templates/groups/<int:group_id>/reconcile/submit/", views.template_group_reconcile_submit, name="template_group_reconcile_submit",),
      path("templates/<str:key>/versions/<int:version_id>/view/", views.template_version_history_view, name="template_version_history_view",),
      path("plan/<int:plan_run_id>/note/submit/", views.plan_note_submit, name="plan_note_submit",),
-     path("plan/<int:plan_run_id>/vehicle/<str:group_name>/", views.plan_vehicle_submit, name="plan_vehicle_submit",),
      path("templates/groups/<int:group_id>/delete/", views.template_group_delete, name="template_group_delete",),
      path("templates/groups/<int:group_id>/download/", views.template_group_download_zip, name="template_group_download_zip",),
      path("templates/groups/<int:group_id>/versions/<str:key>/<int:version_id>/view/", views.template_version_view, name="template_version_view",),
+     path("plan/<int:plan_run_id>/vehicle/<str:group_name>/", views.plan_vehicle_submit, name="plan_vehicle_submit",),
 
 ]

@@ -56,7 +56,7 @@ class LogisticGroupAdmin(admin.ModelAdmin):
 
 @admin.register(Vehicle)
 class VehicleAdmin(admin.ModelAdmin):
-    """รายชื่อรถที่มีจริง — Admin เพิ่ม/ปิดใช้งานเองได้ (2025-09-12) ไม่ผูกกับกลุ่มพื้นที่ใดๆ เพราะ
+    """รายชื่อรถที่มีจริง — Admin เพิ่ม/ปิดใช้งานเองได้ (2026-09-12) ไม่ผูกกับกลุ่มพื้นที่ใดๆ เพราะ
     รถคันเดียวใช้วิ่งกลุ่มไหนก็ได้ เลือกอิสระตอนดูแผนแต่ละครั้ง"""
     list_display = ("plate_number", "vehicle_size", "basket_capacity", "is_active")
     list_editable = ("is_active",)

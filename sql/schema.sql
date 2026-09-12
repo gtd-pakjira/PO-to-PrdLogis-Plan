@@ -180,7 +180,7 @@ BEGIN
 END $$;
 
 -- ---------- config ของ Production Plan (เดิม SHEET_NAME hardcode เป็น "แพลน 7-11" ในโค้ด — ย้ายมาไว้
--- นี่แทน 2025-09-05) — มีแค่แถวเดียวต่อลูกค้า (Production Plan เป็นเทมเพลตเดียว ไม่ใช่หลายกลุ่มแบบ
+-- นี่แทน 2026-09-05) — มีแค่แถวเดียวต่อลูกค้า (Production Plan เป็นเทมเพลตเดียว ไม่ใช่หลายกลุ่มแบบ
 -- Logistic Plan) — Admin แก้ชื่อ sheet ผ่าน Django Admin panel ได้ถ้าเทมเพลตเปลี่ยนชื่อ sheet ----------
 CREATE TABLE IF NOT EXISTS production_plan_config (
     id              SERIAL PRIMARY KEY,
@@ -271,13 +271,13 @@ ALTER TABLE template_version ADD COLUMN IF NOT EXISTS original_filename TEXT;
 ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS production_template_version_id INTEGER
     REFERENCES template_version(id);
 
--- หมายเหตุของแผน (Add PO feature — 2025-09-12) — ให้ Admin จดกำกับแผนไว้เองได้ เช่น "รอบเช้าเพิ่ม
+-- หมายเหตุของแผน (Add PO feature — 2026-09-12) — ให้ Admin จดกำกับแผนไว้เองได้ เช่น "รอบเช้าเพิ่ม
 -- ทีหลัง" / "แก้ยอดตามที่ฝ่ายผลิตแจ้ง" — CREATE TABLE ด้านบนมีคอลัมน์นี้แล้วก็จริง แต่บรรทัดนั้นทำงาน
 -- เฉพาะตอน fresh install เท่านั้น (IF NOT EXISTS guard) database ที่มีอยู่แล้วต้องอาศัย ALTER ตรงนี้
--- เสมอ — บทเรียนจากบั๊ก updated_at ที่เคยขาด ALTER แล้วทำให้ Django Admin พังทั้งหน้า (2025-09-10)
+-- เสมอ — บทเรียนจากบั๊ก updated_at ที่เคยขาด ALTER แล้วทำให้ Django Admin พังทั้งหน้า (2026-09-10)
 ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS note TEXT;
 
--- ---------- Template Group (Feature 1 — 2025-09-10) ----------
+-- ---------- Template Group (Feature 1 — 2026-09-10) ----------
 -- จัดกลุ่ม TemplateVersion (Production 1 ตัว + Logistic หลายตัว) ให้เป็น "ชุด" เดียวกัน กัน Admin
 -- เผลอเอา Production กับ Logistic คนละรอบมาใช้คู่กัน — ตอน Activate Group จะสลับ is_active ของทุก
 -- TemplateVersion สมาชิกในกลุ่มพร้อมกันทีเดียว (atomic) แทนที่จะ activate ทีละไฟล์แบบเดิม
@@ -343,7 +343,7 @@ END $$;
 ALTER TABLE plan_run_logistic_file ADD COLUMN IF NOT EXISTS template_version_id INTEGER
     REFERENCES template_version(id);
 
--- ---------- Vehicle / เลือกรถ (2025-09-12) ----------
+-- ---------- Vehicle / เลือกรถ (2026-09-12) ----------
 -- รายชื่อรถที่มีจริง (ทะเบียน + ความจุตะกร้า + ขนาด) — ให้ Admin จัดการผ่าน Django Admin ได้ตรงๆ
 -- ไม่ผูกกับ LogisticGroup เพราะรถคันเดียวใช้วิ่งกลุ่มไหนก็ได้ (เลือกอิสระต่อแผนแต่ละครั้ง)
 CREATE TABLE IF NOT EXISTS vehicle (
@@ -358,7 +358,7 @@ CREATE TABLE IF NOT EXISTS vehicle (
 );
 CREATE INDEX IF NOT EXISTS idx_vehicle_customer ON vehicle(customer_id);
 
--- ข้อมูลรถจริง 8 คัน (จากไฟล์ "ความจุรถ-ตระกร้าเซเว่น.xlsx" — 2025-09-12) — ON CONFLICT DO NOTHING
+-- ข้อมูลรถจริง 8 คัน (จากไฟล์ "ความจุรถ-ตระกร้าเซเว่น.xlsx" — 2026-09-12) — ON CONFLICT DO NOTHING
 -- กันซ้ำถ้ารัน schema.sql ซ้ำ (Admin แก้ไข/เพิ่มรถเองทีหลังผ่าน Django Admin ได้ ไม่กระทบ seed ชุดนี้)
 DO $$
 DECLARE
@@ -395,7 +395,7 @@ CREATE INDEX IF NOT EXISTS idx_plan_run_logistic_run ON plan_run_logistic_file(p
 ALTER TABLE product_master ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE location_mapping ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
--- *** CRITICAL FIX (2025-09-10) — updated_at ขาด migration มาตั้งแต่ต้น ***
+-- *** CRITICAL FIX (2026-09-10) — updated_at ขาด migration มาตั้งแต่ต้น ***
 -- product_master/location_mapping มี "updated_at" อยู่ใน CREATE TABLE statement ด้านบนแล้ว (บรรทัด
 -- ~56, ~70) แต่บรรทัดนั้นทำงานแค่ตอน "fresh install" เท่านั้น (ผ่าน IF NOT EXISTS guard) —
 -- database ที่เคย migrate ผ่านมาก่อนหน้านี้แล้ว (มี table อยู่แล้ว) จะไม่มี column นี้เลย เพราะไม่เคยมี

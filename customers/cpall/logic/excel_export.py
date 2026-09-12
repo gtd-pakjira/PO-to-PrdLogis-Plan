@@ -24,7 +24,7 @@ from customers.cpall.logic.logistic_plan_export import SUB_LOCATION_LABEL_CORREC
 TEMPLATE_PATH = "customers/cpall/excel_templates/production_plan_template.xlsx"
 def get_sheet_name() -> str:
     """
-    ชื่อ sheet ในไฟล์เทมเพลต Production Plan — เดิม hardcode เป็น constant ตรงๆ (2025-09-05 ย้ายมา
+    ชื่อ sheet ในไฟล์เทมเพลต Production Plan — เดิม hardcode เป็น constant ตรงๆ (2026-09-05 ย้ายมา
     query จาก ProductionPlanConfig แทน) ให้ Admin แก้ผ่าน Django Admin panel ได้ถ้าเทมเพลตเปลี่ยนชื่อ
     sheet ไม่ต้องแก้โค้ด/deploy ใหม่ — query สดทุกครั้งที่เรียก ไม่ cache
     """
@@ -56,7 +56,7 @@ IGNORE_HEADER_LABELS = {"บาร์ระบุวันผลิต"}
 # เทมเพลตเดิมพิมพ์ชื่อจุดส่งย่อยไม่ตรงกับที่ตั้งไว้ใน location_mapping.yaml (ย่อ/พิมพ์ตก) — แก้ให้
 # ตรงกันตรงนี้ — เดิมนิยาม dict นี้ซ้ำอีกชุดใน logistic_plan_export.py (คนละเนื้อหา ไม่ตรงกัน — ทำให้
 # เจอชื่อพิมพ์ผิดใหม่แล้วต้องจำไปแก้ 2 ที่ ลืมง่ายมาก) — รวมเป็นที่เดียวที่ logistic_plan_export.py
-# (มีรายการครบกว่า) แล้ว import มาใช้ตรงนี้แทน (2025-09-05) — ดู import ที่ต้นไฟล์
+# (มีรายการครบกว่า) แล้ว import มาใช้ตรงนี้แทน (2026-09-05) — ดู import ที่ต้นไฟล์
 
 # บาร์โค้ดที่เทมเพลตพิมพ์ผิด/สลับกับ SKU อื่น (พบระหว่างสร้าง sku_master.yaml)
 LEGACY_TEMPLATE_BARCODE_CORRECTIONS = {

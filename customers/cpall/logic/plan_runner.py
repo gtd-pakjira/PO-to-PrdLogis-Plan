@@ -299,13 +299,11 @@ def list_plan_runs(limit: int = 50) -> list[dict]:
 
 def _build_logistic_plan_summary(plan_run_id: int, lf) -> dict:
     """
-    เตรียมข้อมูล 1 กลุ่ม logistic สำหรับหน้าแผน รวมคำแนะนำขนาดรถ + ข้อความเตือนถ้ายอดตะกร้าเกิน
-    ความจุรถที่ใหญ่ที่สุดที่มี (เลือกรถ feature ต่อยอด — 2025-09-12, แก้บั๊ก 2025-09-12)
+    เตรียมข้อมูล 1 กลุ่ม logistic สำหรับหน้าแผน รวมคำแนะนำขนาดรถ + ยอดตะกร้ารวม + ข้อความเตือนถ้ายอด
+    เกินความจุรถที่ใหญ่ที่สุดที่มี (เลือกรถ feature ต่อยอด — 2026-09-12)
 
-    *** เจอบั๊กจริง ***: เดิม suggest_vehicle_size() คืนค่า (None, total_basket) ถูกต้องอยู่แล้วเวลา
-    ไม่มีรถพอ (ไม่แนะนำมั่วๆ) แต่หน้าเว็บทิ้งค่า total_basket ไปเลย (ใช้แค่ index [0]) ทำให้ Admin เห็น
-    แค่ "ยังไม่ได้เลือกรถ" เฉยๆ เหมือนกรณี "ยังไม่เคยตั้งค่า" ทั่วไป ไม่รู้เลยว่าจริงๆ แล้วไม่มีรถคันไหน
-    ในระบบที่จุพอเลย ต้องแบ่งเป็นหลายคันเอง (ตามที่ตกลงกันไว้ว่าไม่ให้ระบบตัดสินใจแบ่งแทน)
+    total_basket โชว์เสมอ (ไม่ใช่แค่ตอน overflow) — Admin ขอให้เห็นยอดตะกร้าไวๆ ตรงหน้าแผนเลย ไม่ต้อง
+    เปิดตารางดู (2026-09-12)
     """
     summary = {
         "group_name": lf.group_name, "status": lf.status, "file_path": lf.file_path,
@@ -313,11 +311,12 @@ def _build_logistic_plan_summary(plan_run_id: int, lf) -> dict:
         "vehicle_size": lf.vehicle_size, "vehicle_id": lf.vehicle_id,
         "vehicle_plate": lf.vehicle.plate_number if lf.vehicle else None,
         "driver_name": lf.driver_name,
-        "suggested_vehicle_size": None, "capacity_overflow_basket": None,
+        "suggested_vehicle_size": None, "capacity_overflow_basket": None, "total_basket": None,
     }
     if lf.status == "success":
         suggested_size, total_basket = suggest_vehicle_size(plan_run_id, lf.group_name)
         summary["suggested_vehicle_size"] = suggested_size
+        summary["total_basket"] = total_basket
         if suggested_size is None:
             # ไม่มีรถคันไหนในระบบจุพอเลย (ไม่ใช่แค่ "ยังไม่ได้ตั้งค่า") — เก็บยอดจริงไว้บอก Admin ตรงๆ
             summary["capacity_overflow_basket"] = total_basket

@@ -827,7 +827,7 @@ def upload_new_version(key: str, new_filepath: str, original_filename: str = Non
     original_filename: ชื่อไฟล์ตอน Admin เลือกอัปโหลดจริง (เก็บไว้ให้ดูย้อนหลังในหน้าประวัติเวอร์ชัน)
 
     *** ใช้กับหน้า Template Versions แบบเดิม (อัปโหลด + reconcile ProductMaster ทันที) เท่านั้น ***
-    (2025-09-10) สำหรับ Feature 1 (Template Group) ใช้ upload_version_for_group() แทน — ฟังก์ชันนั้น
+    (2026-09-10) สำหรับ Feature 1 (Template Group) ใช้ upload_version_for_group() แทน — ฟังก์ชันนั้น
     ตรวจแค่โครงสร้างไฟล์ ไม่ reconcile กับ ProductMaster ทันที (defer ไปเช็คตอน Activate Group แทน
     ตาม concept "import เข้า Group ยังไม่เช็คกับ ProductMaster") — เก็บฟังก์ชันนี้ไว้ไม่ลบทิ้ง เผื่อ
     ต้องกลับไปใช้ flow อัปโหลดนอก Group แบบเดิมในอนาคต
@@ -894,7 +894,7 @@ def upload_new_version(key: str, new_filepath: str, original_filename: str = Non
 
 def upload_version_for_group(key: str, new_filepath: str, original_filename: str = None):
     """
-    สร้าง TemplateVersion ใหม่สำหรับใช้ใน Template Group (Feature 1, 2025-09-10) — ตรวจแค่โครงสร้าง
+    สร้าง TemplateVersion ใหม่สำหรับใช้ใน Template Group (Feature 1, 2026-09-10) — ตรวจแค่โครงสร้าง
     ไฟล์เอง (validate_template) เหมือนกัน แต่ *** ไม่เรียก reconcile_template_with_product_master()
     เลย *** ต่างจาก upload_new_version() เดิมด้านบน — ตาม concept ที่ตกลงกันไว้: "ตอน import ไฟล์เข้า
     Group ยังไม่เช็คกับ ProductMaster" เช็คแค่ตอนกด Activate Group เท่านั้น (ผ่าน
@@ -1044,7 +1044,7 @@ def get_group_template_versions(group):
 def validate_group_consistency(production_version, logistic_versions: list) -> dict:
     """
     ตรวจสอบว่า Production Template กับ Logistic Template ทั้งหมดในชุด (Group) ตรงกันไหม — ตรวจ "ไฟล์
-    กับไฟล์" ล้วนๆ ไม่เกี่ยวกับ ProductMaster เลย (Feature 1, 2025-09-10 — เช็คกับ ProductMaster แยก
+    กับไฟล์" ล้วนๆ ไม่เกี่ยวกับ ProductMaster เลย (Feature 1, 2026-09-10 — เช็คกับ ProductMaster แยก
     ต่างหากตอน Activate Group ผ่าน reconcile_template_with_product_master())
 
     กติกาที่ตกลงกันไว้:
@@ -1158,7 +1158,7 @@ def validate_group_consistency(production_version, logistic_versions: list) -> d
 
 def ensure_bootstrap_group():
     """
-    Bootstrap "ชุดปัจจุบัน" (Feature 1, Step 7, 2025-09-11) — ถ้ายังไม่มี TemplateGroup เลยในระบบ
+    Bootstrap "ชุดปัจจุบัน" (Feature 1, Step 7, 2026-09-11) — ถ้ายังไม่มี TemplateGroup เลยในระบบ
     (ระบบเพิ่งอัปเกรดมาใช้ Template Group ครั้งแรก) สร้าง Group แรกอัตโนมัติจากเวอร์ชันที่ active
     อยู่ตอนนี้ทั้งหมด — ไม่ต้องให้ Admin ทำอะไรเพิ่ม ป้องกันข้อมูลสับสน (ถ้าไม่ทำ Admin จะอัปโหลด/
     เปลี่ยนเวอร์ชันอะไรไม่ได้เลยจนกว่าจะสร้าง Group เอง เพราะการอัปโหลด/activate ทั้งหมดย้ายมาอยู่ใต้

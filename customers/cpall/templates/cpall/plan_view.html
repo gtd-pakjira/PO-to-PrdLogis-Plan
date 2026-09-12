@@ -89,7 +89,10 @@
             <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-100 text-red-700 text-sm">✕</span>
             {% endif %}
             <div class="flex-1">
-                <p class="text-sm font-medium text-stone-900">แพลนกระจาย — {{ lp.group_name }}</p>
+                <p class="text-sm font-medium text-stone-900">
+                    แพลนกระจาย — {{ lp.group_name }}
+                    {% if lp.total_basket %}<span class="text-stone-400 font-normal">({{ lp.total_basket }} ตะกร้า)</span>{% endif %}
+                </p>
                 {% if lp.status == 'skipped' %}
                 <p class="text-xs text-stone-400 mt-0.5">ยังไม่มีข้อมูลรอบนี้</p>
                 {% elif lp.status == 'failed' %}

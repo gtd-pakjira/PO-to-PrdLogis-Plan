@@ -161,7 +161,7 @@ def import_form(request):
 
 def _post_import_destination(request, po_import_id):
     """
-    หา URL ปลายทางหลัง import PO เสร็จ (Add PO feature — 2025-09-12)
+    หา URL ปลายทางหลัง import PO เสร็จ (Add PO feature — 2026-09-12)
 
     ปกติจบที่หน้า PO List เหมือนเดิมทุกประการ — ยกเว้นกรณีที่ผู้ใช้เข้ามาจาก flow "เพิ่ม PO เข้าแผน"
     (หน้า add_po_form ส่ง add_to_plan มาด้วย แล้วเก็บไว้ใน session) จะพากลับไปที่แผนนั้นต่อทันที
@@ -183,7 +183,7 @@ def import_submit(request):
     is_htmx = request.headers.get("HX-Request") == "true"
 
     # มาจาก flow "เพิ่ม PO เข้าแผน" หรือเปล่า — เก็บไว้ใน session เพื่อให้รอดข้ามหน้า resolve-locations
-    # ที่ import อาจแวะก่อน (Add PO feature — 2025-09-12) ไม่กระทบ flow import ปกติเลย ถ้าไม่ได้ส่งมา
+    # ที่ import อาจแวะก่อน (Add PO feature — 2026-09-12) ไม่กระทบ flow import ปกติเลย ถ้าไม่ได้ส่งมา
     add_to_plan = request.POST.get("add_to_plan")
     if add_to_plan:
         try:
@@ -228,7 +228,7 @@ def import_submit(request):
         return error_response(f"ไฟล์ PO มีปัญหา: {e}")
     except Exception as e:
         # ไฟล์ผิดประเภท (เช่น ไม่ใช่ .xlsx จริง) เป็นความผิดพลาดของผู้ใช้ (เลือกไฟล์ผิด) ไม่ใช่ระบบ
-        # พังเอง — ใช้ 400 แทน 500 เพื่อให้ log/monitoring แยกแยะได้ถูกต้อง (เจอจากการทดสอบ 2025-09-06)
+        # พังเอง — ใช้ 400 แทน 500 เพื่อให้ log/monitoring แยกแยะได้ถูกต้อง (เจอจากการทดสอบ 2026-09-06)
         return error_response(f"อ่านไฟล์ล้มเหลว: {type(e).__name__}: {e}", status=400)
 
     if duplicate_groups:
@@ -785,7 +785,7 @@ def buffer_form(request):
     # ไปเพิ่มแถวในไฟล์ template ตรงๆ ถึงจะขึ้น) กลับหัวกลับหางกับที่ควรเป็น — แก้ให้ ProductMaster (DB)
     # เป็นตัวตัดสินว่า "มี SKU อะไรบ้าง" ส่วน Template ใช้แค่หาว่าแถวไหนอยู่ตรงไหน (คนละหน้าที่กัน) —
     # SKU ที่ active ใน DB แต่ไม่มีแถวใน Template เลย ไม่แสดงในฟอร์ม (ไม่มีที่เก็บค่าจริง) แต่เก็บไว้
-    # แจ้งเตือน Admin ว่าขาดอะไรไป (2025-09-05)
+    # แจ้งเตือน Admin ว่าขาดอะไรไป (2026-09-05)
     wb = openpyxl.load_workbook(PP_TEMPLATE_PATH)
     ws = wb[get_pp_sheet_name()]
     header_rows = _find_pp_sku_header_rows(ws)  # {barcode: row} — เอาไว้เรียงลำดับ + เช็คว่ามีแถวจริง
@@ -907,7 +907,7 @@ def edit_buffer_form(request, plan_run_id):
     header_rows = _find_pp_sku_header_rows(ws)
 
     # เหตุผลเดียวกับ buffer_form() — ดึง SKU จาก ProductMaster (DB) ที่ active เป็นหลัก ไม่ใช่จาก
-    # Template ตรงๆ (2025-09-05)
+    # Template ตรงๆ (2026-09-05)
     active_barcodes = set(ProductMaster.objects.filter(is_active=True).values_list("barcode", flat=True))
     barcodes = [
         bc for bc, _ in sorted(header_rows.items(), key=lambda kv: kv[1])
@@ -978,7 +978,7 @@ def edit_buffer_form_submit(request, plan_run_id):
 
 def _snapshot_plan_results(plan_run_id):
     """
-    เก็บ snapshot ยอดของแผนไว้เทียบก่อน/หลังเพิ่ม PO (Add PO feature — 2025-09-12)
+    เก็บ snapshot ยอดของแผนไว้เทียบก่อน/หลังเพิ่ม PO (Add PO feature — 2026-09-12)
     key = (sheet_type, group_name, barcode, column_label) -> qty
     ใช้ตรวจว่าการเพิ่ม PO ไปกระทบ "ช่องที่มีข้อมูลอยู่แล้ว" หรือไม่ — ตามหลักการที่ตกลงกันไว้ว่า
     การเพิ่ม PO ควรไปเติมเฉพาะช่องที่ยังว่าง ไม่ควรแก้ข้อมูลเดิม ถ้ากระทบต้องแจ้งให้คนทำเลือกเอง
@@ -1078,7 +1078,7 @@ def add_po_buffer(request, plan_run_id):
 
 def add_po_submit(request, plan_run_id):
     """
-    ผูก PO ใหม่เข้าแผนเดิม + คำนวณใหม่ทั้งชุด (Add PO feature — 2025-09-12)
+    ผูก PO ใหม่เข้าแผนเดิม + คำนวณใหม่ทั้งชุด (Add PO feature — 2026-09-12)
 
     ทำใน transaction เดียวเสมอ แล้วเทียบ snapshot ก่อน/หลัง:
       - ถ้าไม่มีช่องเดิมเปลี่ยนเลย  -> commit ปกติ จบเลย (กรณีปกติของ workflow รอบเย็น->รอบเช้า)
@@ -1168,7 +1168,7 @@ def add_po_submit(request, plan_run_id):
         return error_response(f"เพิ่ม PO ไม่สำเร็จ: {type(e).__name__}: {e}", status=500)
 
     if is_htmx:
-        # เตือนถ้ายอดตะกร้าใหม่เกินความจุรถที่เคยเลือกไว้ (เลือกรถ feature — 2025-09-12) — เช็คแค่กลุ่ม
+        # เตือนถ้ายอดตะกร้าใหม่เกินความจุรถที่เคยเลือกไว้ (เลือกรถ feature — 2026-09-12) — เช็คแค่กลุ่ม
         # ที่เคยเลือกทะเบียนรถจริงไว้ (ไม่ใช่แค่ขนาด เพราะต้องรู้ capacity ตัวเลขจริงมาเทียบ) ไม่บังคับ
         # เปลี่ยนอะไรเลย แค่แจ้งให้ Admin รู้ตัวไปเช็คเอง ตามที่ตกลงกันไว้ว่า "เตือนแต่ไม่บังคับเปลี่ยน"
         from customers.cpall.logic.plan_view_data import suggest_vehicle_size
@@ -1198,7 +1198,7 @@ def add_po_submit(request, plan_run_id):
 
 
 def plan_note_submit(request, plan_run_id):
-    """บันทึกหมายเหตุของแผน (Add PO feature — 2025-09-12)"""
+    """บันทึกหมายเหตุของแผน (Add PO feature — 2026-09-12)"""
     if request.method != "POST":
         return redirect("cpall:view_plan", plan_run_id=plan_run_id)
     plan_run = get_object_or_404(PlanRun, id=plan_run_id)
@@ -1221,7 +1221,7 @@ def plan_note_submit(request, plan_run_id):
 
 def plan_vehicle_submit(request, plan_run_id, group_name):
     """
-    บันทึกการเลือกรถของกลุ่ม logistic หนึ่งกลุ่มในแผนนี้ (เลือกรถ feature — 2025-09-12)
+    บันทึกการเลือกรถของกลุ่ม logistic หนึ่งกลุ่มในแผนนี้ (เลือกรถ feature — 2026-09-12)
 
     ทุกช่องไม่บังคับ (Admin เว้นว่างได้หมด — ไม่มีอะไรถูกเขียนทับใน Excel ถ้าไม่กรอกอะไรเลย)
     vehicle_size แยกเป็นอิสระจาก vehicle (ทะเบียน) เพราะ Admin อาจจะรู้แค่ขนาดที่ต้องใช้ (ตามที่ระบบ
@@ -1452,7 +1452,7 @@ def download_all_zip(request, plan_run_id):
 
 def template_list(request):
     """
-    Template Group tab (default) — Feature 1, 2025-09-10 — แสดงรายการชุด Template ทั้งหมด
+    Template Group tab (default) — Feature 1, 2026-09-10 — แสดงรายการชุด Template ทั้งหมด
     """
     from customers.cpall.logic.template_manager import ensure_bootstrap_group
     from customers.cpall.models import TemplateGroup
@@ -1921,7 +1921,7 @@ def template_group_activate(request, group_id):
         return response
 
     # [1] ตรวจไฟล์กับไฟล์ก่อน — ไม่ผ่าน → popup error (ไม่ list รหัสสินค้ายาวๆ ในข้อความตรงๆ ตามที่
-    # ขอ 2025-09-11 — สรุปจำนวนสั้นๆ แล้วให้กด "ดูรายละเอียด ↗" ไปหน้า Group detail แทน ที่มีรายละเอียด
+    # ขอ 2026-09-11 — สรุปจำนวนสั้นๆ แล้วให้กด "ดูรายละเอียด ↗" ไปหน้า Group detail แทน ที่มีรายละเอียด
     # ครบอยู่แล้ว (consistency คำนวณสดใหม่ทุกครั้งที่โหลดหน้า) — reuse pattern popup/detail_url เดิม
     # จาก base.html's alert modal (เคยใช้กับ missing_template_items ตอน import PO มาก่อนแล้ว)
     consistency = validate_group_consistency(production_version, logistic_versions)
