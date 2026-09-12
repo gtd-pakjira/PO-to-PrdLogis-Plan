@@ -19,6 +19,11 @@ urlpatterns = [
     path("plan/<int:plan_run_id>/", views.view_plan, name="view_plan"),
     path("plan/<int:plan_run_id>/edit-buffer/", views.edit_buffer_form, name="edit_buffer_form"),
     path("plan/<int:plan_run_id>/edit-buffer/submit/", views.edit_buffer_form_submit, name="edit_buffer_form_submit"),
+    # Add PO — เพิ่ม PO เข้าแผนเดิม (2025-09-12)
+    path("plan/<int:plan_run_id>/add-po/", views.add_po_form, name="add_po_form"),
+    path("plan/<int:plan_run_id>/add-po/buffer/", views.add_po_buffer, name="add_po_buffer"),
+    path("plan/<int:plan_run_id>/add-po/submit/", views.add_po_submit, name="add_po_submit"),
+    path("plan/<int:plan_run_id>/note/", views.plan_note_submit, name="plan_note_submit"),
     path("plan/<int:plan_run_id>/download/production/", views.download_production, name="download_production"),
     path("plan/<int:plan_run_id>/download/logistic/<str:group_name>/", views.download_logistic, name="download_logistic"),
     path("plan/<int:plan_run_id>/download/all/", views.download_all_zip, name="download_all_zip"),

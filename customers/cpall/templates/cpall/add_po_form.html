@@ -1,0 +1,90 @@
+{% extends "cpall/base.html" %}
+{% load crispy_forms_tags %}
+{% block nav_plan %}active{% endblock %}
+{% block title %}เพิ่ม PO เข้า{{ plan_name }} — แพลนผลิต 7-11{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <a href="{% url 'cpall:view_plan' plan_run_id %}" class="text-sm text-stone-500 hover:text-stone-700">&larr; กลับไปหน้าแผน</a>
+    <h1 class="text-xl font-semibold text-stone-900 mt-1">เพิ่ม PO เข้า{{ plan_name }}</h1>
+    <p class="text-sm text-stone-500 mt-1">
+        PO ที่เพิ่มจะไปเติมในช่องที่ยังว่างอยู่ — ถ้ามีอะไรกระทบยอดเดิม ระบบจะแจ้งให้ตัดสินใจก่อนเสมอ
+    </p>
+</div>
+
+<div class="mb-5">
+    <h2 class="text-sm font-medium text-stone-700 mb-2">อยู่ในแผนนี้แล้ว</h2>
+    <div class="flex flex-wrap gap-2">
+        {% for po in current_pos %}
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-xs text-stone-700">
+            {{ po.display_filename }}
+            <span class="text-stone-400">({{ po.production_date|date:"d/m" }} &rarr; {{ po.po_date|date:"d/m" }})</span>
+        </span>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="max-w-2xl space-y-4" x-data="{ mode: 'import' }">
+
+    <!-- ทางที่ 1: นำเข้าไฟล์ใหม่ (ทางหลักของ workflow รอบเช้า) -->
+    <div class="bg-white rounded-lg border px-4 py-4 transition"
+         :class="mode === 'import' ? 'border-stone-400' : 'border-stone-200'">
+        <label class="flex items-center gap-2 text-sm font-medium text-stone-800 cursor-pointer">
+            <input type="radio" name="add_mode" value="import" x-model="mode"
+                   class="text-emerald-700 focus:ring-emerald-600">
+            นำเข้าไฟล์ PO ใหม่
+        </label>
+        <div x-show="mode === 'import'" x-cloak class="mt-3">
+            <form hx-post="{% url 'cpall:import_submit' %}" hx-encoding="multipart/form-data">
+                {% csrf_token %}
+                <input type="hidden" name="add_to_plan" value="{{ plan_run_id }}">
+                {{ form|crispy }}
+                <button type="submit" hx-disabled-elt="this"
+                        class="mt-2 rounded-md bg-stone-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-stone-900 transition disabled:opacity-70">
+                    นำเข้าและไปต่อ
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ทางที่ 2: เลือกจาก PO ที่มีอยู่แล้ว -->
+    <div class="bg-white rounded-lg border px-4 py-4 transition"
+         :class="mode === 'existing' ? 'border-stone-400' : 'border-stone-200'">
+        <label class="flex items-center gap-2 text-sm font-medium text-stone-800 cursor-pointer">
+            <input type="radio" name="add_mode" value="existing" x-model="mode"
+                   class="text-emerald-700 focus:ring-emerald-600">
+            เลือกจาก PO ที่นำเข้าไว้แล้ว
+        </label>
+        <div x-show="mode === 'existing'" x-cloak class="mt-3">
+            {% if available_pos %}
+            <form method="get" action="{% url 'cpall:add_po_buffer' plan_run_id %}"
+                  x-data="{ picked: [] }"
+                  @submit="$refs.hidden.value = picked.join(',')">
+                <input type="hidden" name="new_po_ids" x-ref="hidden">
+                <div class="divide-y divide-stone-100 border border-stone-200 rounded-md mb-3">
+                    {% for po in available_pos %}
+                    <label class="flex items-center gap-3 px-3 py-2.5 text-sm cursor-pointer hover:bg-stone-50">
+                        <input type="checkbox" value="{{ po.id }}" x-model="picked"
+                               class="rounded border-stone-300 text-emerald-700 focus:ring-emerald-600">
+                        <span class="mono text-xs text-stone-400">#{{ po.id }}</span>
+                        <span class="flex-1 text-stone-800 truncate" title="{{ po.display_filename }}">{{ po.display_filename }}</span>
+                        <span class="text-xs text-stone-500 shrink-0">
+                            {{ po.production_date|date:"d/m/Y" }} &rarr; {{ po.po_date|date:"d/m/Y" }}
+                        </span>
+                    </label>
+                    {% endfor %}
+                </div>
+                <button type="submit" x-bind:disabled="picked.length === 0"
+                        class="rounded-md bg-stone-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-stone-900 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                    ถัดไป — กรอกยอดเผื่อ
+                </button>
+            </form>
+            {% else %}
+            <p class="text-sm text-stone-500">ไม่มี PO อื่นในระบบที่ยังไม่อยู่ในแผนนี้</p>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}

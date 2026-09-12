@@ -516,8 +516,8 @@ def apply_product_master_action(
       DEACTIVATE
     """
     from django.db import transaction
+
     from customers.cpall.models import ProductMaster
-    from customers.cpall.logic.product_master_manager import save_product
 
     customer_id = get_cpall_customer_id()
 
@@ -616,6 +616,7 @@ def activate_template_group(group, product_actions=None):
     """
     from django.db import transaction
     from django.utils import timezone
+
     from customers.cpall.models import TemplateGroup, TemplateVersion
 
     product_actions = product_actions or []
@@ -1059,8 +1060,11 @@ def validate_group_consistency(production_version, logistic_versions: list) -> d
 
     from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
     from customers.cpall.logic.excel_export import _find_sub_location_columns
-    from customers.cpall.logic.logistic_plan_export import _find_column_labels, _find_line_no_column
-    from customers.cpall.logic.logistic_plan_export import _find_qty_column_range
+    from customers.cpall.logic.logistic_plan_export import (
+        _find_column_labels,
+        _find_line_no_column,
+        _find_qty_column_range,
+    )
     from customers.cpall.logic.logistic_plan_export import _find_sku_header_rows as _find_lp_sku_header_rows
 
     registry = get_template_registry()

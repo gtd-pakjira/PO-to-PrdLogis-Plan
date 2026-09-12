@@ -13,14 +13,24 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
 from customers.cpall.forms import ImportPOForm, TemplateUploadForm
+from customers.cpall.logic.excel_export import (
+    find_po_barcodes_missing_in_template,
+    find_po_sub_locations_missing_in_template,
+)
 from customers.cpall.logic.grouping import (
+    DuplicateSubLocationError,
     InactiveSkuOrderedError,
     ReconciliationError,
-    check_inactive_skus_ordered,
-    DuplicateSubLocationError,
     check_duplicate_sub_locations,
+    check_inactive_skus_ordered,
 )
 from customers.cpall.logic.location_mapping_manager import get_existing_groups, save_location_mapping
+from customers.cpall.logic.logistic_plan_export import (
+    LogisticPlanError,
+    get_group_templates,
+    group_has_data,
+    validate_logistic_plan,
+)
 from customers.cpall.logic.plan_regenerator import (
     PlanRegenerateError,
     regenerate_logistic_plan_bytes,
@@ -58,34 +68,21 @@ from customers.cpall.logic.product_master_manager import save_product
 from customers.cpall.logic.template_manager import (
     TemplateInUseError,
     TemplateValidationError,
+    activate_template_group,
+    apply_product_master_action,
+    build_group_reconcile_actions,
     delete_version,
+    get_group_template_versions,
     get_template_grid,
     get_template_registry,
     list_templates,
     list_versions,
+    reconcile_template_version,
     restore_to_version,
     upload_new_version,
-    reconcile_template_version,
-    apply_product_master_action,
     validate_group_consistency,
-    _sync_live_file,
-    get_group_template_versions,
-    build_group_reconcile_actions,
-    activate_template_group,
 )
-from customers.cpall.models import PlanRun
-
-from customers.cpall.logic.excel_export import (
-    find_po_barcodes_missing_in_template,
-    find_po_sub_locations_missing_in_template,
-)
-
-from customers.cpall.logic.logistic_plan_export import (
-    get_group_templates,
-    group_has_data,
-    validate_logistic_plan,
-    LogisticPlanError,
-)
+from customers.cpall.models import PlanRun, PoImport
 
 UPLOAD_DIR = "customers/cpall/data/po_uploads"
 TEMP_UPLOAD_DIR = "customers/cpall/data/temp_uploads"
@@ -162,11 +159,37 @@ def import_form(request):
     return render(request, "cpall/import.html", {"form": ImportPOForm()})
 
 
+def _post_import_destination(request, po_import_id):
+    """
+    หา URL ปลายทางหลัง import PO เสร็จ (Add PO feature — 2025-09-12)
+
+    ปกติจบที่หน้า PO List เหมือนเดิมทุกประการ — ยกเว้นกรณีที่ผู้ใช้เข้ามาจาก flow "เพิ่ม PO เข้าแผน"
+    (หน้า add_po_form ส่ง add_to_plan มาด้วย แล้วเก็บไว้ใน session) จะพากลับไปที่แผนนั้นต่อทันที
+    พร้อม PO ที่เพิ่ง import — ไม่ให้หลุด context ระหว่างทาง (flow import อาจแวะหน้า resolve-locations
+    ก่อนได้ เลยต้องใช้ session ไม่ใช่ query param เพื่อให้ context รอดข้ามหน้า)
+
+    pop ทิ้งทุกครั้งที่ใช้ — ใช้ครั้งเดียวจบ ไม่ค้างไปรบกวน import รอบถัดไป
+    """
+    plan_id = request.session.pop("add_to_plan", None)
+    if plan_id:
+        return reverse("cpall:add_po_buffer", args=[plan_id]) + f"?new_po_ids={po_import_id}"
+    return reverse("cpall:po_list")
+
+
 def import_submit(request):
     if request.method != "POST":
         return redirect("cpall:import_form")
 
     is_htmx = request.headers.get("HX-Request") == "true"
+
+    # มาจาก flow "เพิ่ม PO เข้าแผน" หรือเปล่า — เก็บไว้ใน session เพื่อให้รอดข้ามหน้า resolve-locations
+    # ที่ import อาจแวะก่อน (Add PO feature — 2025-09-12) ไม่กระทบ flow import ปกติเลย ถ้าไม่ได้ส่งมา
+    add_to_plan = request.POST.get("add_to_plan")
+    if add_to_plan:
+        try:
+            request.session["add_to_plan"] = int(add_to_plan)
+        except ValueError:
+            pass
 
     form = ImportPOForm(request.POST, request.FILES)
     if not form.is_valid():
@@ -274,12 +297,13 @@ def import_submit(request):
         }
 
 
+    destination = _post_import_destination(request, po_import_id)
     if is_htmx:
         response = HttpResponse(status=200)
-        response["HX-Redirect"] = reverse("cpall:po_list")
+        response["HX-Redirect"] = destination
         return response
 
-    return redirect("cpall:po_list")
+    return redirect(destination)
 
 
 def confirm_duplicates(request):
@@ -358,11 +382,12 @@ def confirm_duplicates(request):
         #         return response
         #     return redirect("cpall:resolve_products", po_import_id=po_import_id)
 
+        destination = _post_import_destination(request, po_import_id)
         if is_htmx:
             response = HttpResponse(status=200)
-            response["HX-Redirect"] = reverse("cpall:po_list")
+            response["HX-Redirect"] = destination
             return response
-        return redirect("cpall:po_list")
+        return redirect(destination)
 
     # GET — แสดงหน้ายืนยัน (เรียก check_duplicate_rows ใหม่อีกครั้งจากไฟล์ที่ยังค้างอยู่ เผื่อ Admin
     # รีเฟรชหน้านี้ — ไม่ query จาก session เพราะ session เก็บแค่ path ไม่ได้เก็บรายละเอียดกลุ่มที่ซ้ำ)
@@ -411,11 +436,12 @@ def resolve_locations(request, po_import_id):
         #         return response
         #     return redirect("cpall:resolve_products", po_import_id=po_import_id)
 
+        destination = _post_import_destination(request, po_import_id)
         if is_htmx:
             response = HttpResponse(status=200)
-            response["HX-Redirect"] = reverse("cpall:po_list")
+            response["HX-Redirect"] = destination
             return response
-        return redirect("cpall:po_list")
+        return redirect(destination)
 
     return render(request, "cpall/resolve_locations.html", {
         "po_import_id": po_import_id, "unknown_locations": unknown_locations,
@@ -946,6 +972,221 @@ def edit_buffer_form_submit(request, plan_run_id):
             "toast": {"message": "อัปเดตยอดเผื่อและคำนวณแผนใหม่แล้ว", "level": "success"},
             "goBackAfterSave": {},
         })
+        return response
+    return redirect("cpall:view_plan", plan_run_id=plan_run_id)
+
+
+def _snapshot_plan_results(plan_run_id):
+    """
+    เก็บ snapshot ยอดของแผนไว้เทียบก่อน/หลังเพิ่ม PO (Add PO feature — 2025-09-12)
+    key = (sheet_type, group_name, barcode, column_label) -> qty
+    ใช้ตรวจว่าการเพิ่ม PO ไปกระทบ "ช่องที่มีข้อมูลอยู่แล้ว" หรือไม่ — ตามหลักการที่ตกลงกันไว้ว่า
+    การเพิ่ม PO ควรไปเติมเฉพาะช่องที่ยังว่าง ไม่ควรแก้ข้อมูลเดิม ถ้ากระทบต้องแจ้งให้คนทำเลือกเอง
+    """
+    from customers.cpall.models import PlanSkuResult
+
+    return {
+        (r.sheet_type, r.group_name or "", r.barcode, r.column_label): r.qty
+        for r in PlanSkuResult.objects.filter(plan_run_id=plan_run_id, qty__isnull=False)
+    }
+
+
+def _diff_plan_results(before: dict, after: dict) -> list[dict]:
+    """
+    เทียบ snapshot ก่อน/หลัง — คืนเฉพาะ "ช่องเดิมที่เปลี่ยนไปหรือหายไป" เท่านั้น
+    ช่องใหม่ที่เพิ่มเข้ามา (จาก PO ที่เพิ่งเพิ่ม) ไม่ถือว่ากระทบ เพราะเป็นจุดประสงค์ของการเพิ่ม PO อยู่แล้ว
+    """
+    impacts = []
+    for key, old_qty in before.items():
+        sheet_type, group_name, barcode, column_label = key
+        if key not in after:
+            impacts.append({
+                "sheet_type": sheet_type, "group_name": group_name, "barcode": barcode,
+                "column_label": column_label, "old_qty": old_qty, "new_qty": None, "kind": "หายไป",
+            })
+        elif after[key] != old_qty:
+            impacts.append({
+                "sheet_type": sheet_type, "group_name": group_name, "barcode": barcode,
+                "column_label": column_label, "old_qty": old_qty, "new_qty": after[key],
+                "kind": "เปลี่ยนค่า",
+            })
+    return impacts
+
+
+def add_po_form(request, plan_run_id):
+    """หน้าเลือก PO ที่จะเพิ่มเข้าแผนเดิม (Add PO feature) — เลือกจาก PO ที่ import ไว้แล้ว หรือกด
+    นำเข้าไฟล์ใหม่ (ซึ่งจะพากลับมาที่แผนนี้เองหลัง import เสร็จ)"""
+    from customers.cpall.logic.po_parser import list_po_imports
+
+    plan_run = get_object_or_404(PlanRun, id=plan_run_id)
+    current_po_ids = set(plan_run.po_imports.values_list("id", flat=True))
+    available_pos = [po for po in list_po_imports(limit=100) if po["id"] not in current_po_ids]
+    current_pos = [
+        {"id": p.id, "display_filename": os.path.basename(p.source_filename),
+         "production_date": p.production_date, "po_date": p.po_date}
+        for p in plan_run.po_imports.all()
+    ]
+    return render(request, "cpall/add_po_form.html", {
+        "plan_run_id": plan_run_id,
+        "plan_name": plan_run.get_short_label(),
+        "current_pos": current_pos,
+        "available_pos": available_pos,
+        "form": ImportPOForm(),
+    })
+
+
+def add_po_buffer(request, plan_run_id):
+    """หน้ากรอกยอดเผื่อของ flow เพิ่ม PO — ใช้ template เดียวกับหน้าแก้ยอดเผื่อปกติทุกประการ
+    (ค่าปัจจุบันของแผนนี้ pre-fill ไว้ให้แล้ว ถ้าไม่แก้อะไรก็กดคำนวณได้เลย) ต่างแค่พก new_po_ids
+    ติดไปด้วยเป็น hidden field — ยังไม่ผูก PO เข้าแผนจริงจนกว่าจะกดคำนวณ"""
+    import openpyxl
+
+    from customers.cpall.logic.excel_export import TEMPLATE_PATH as PP_TEMPLATE_PATH
+    from customers.cpall.logic.excel_export import _find_sku_header_rows as _find_pp_sku_header_rows
+    from customers.cpall.logic.excel_export import get_sheet_name as get_pp_sheet_name
+    from customers.cpall.logic.plan_runner import get_current_buffer_by_barcode
+    from customers.cpall.models import ProductMaster
+
+    plan_run = get_object_or_404(PlanRun, id=plan_run_id)
+    new_po_ids_str = request.GET.get("new_po_ids", "")
+    new_po_ids = [int(x) for x in new_po_ids_str.split(",") if x.strip()]
+    if not new_po_ids:
+        return redirect("cpall:add_po_form", plan_run_id=plan_run_id)
+
+    wb = openpyxl.load_workbook(PP_TEMPLATE_PATH)
+    ws = wb[get_pp_sheet_name()]
+    header_rows = _find_pp_sku_header_rows(ws)
+    active_barcodes = set(ProductMaster.objects.filter(is_active=True).values_list("barcode", flat=True))
+    barcodes = [bc for bc, _ in sorted(header_rows.items(), key=lambda kv: kv[1]) if bc in active_barcodes]
+
+    current_buffer = get_current_buffer_by_barcode(plan_run_id)
+    name_lookup = {s.barcode: s.name_th for s in ProductMaster.objects.filter(barcode__in=barcodes)}
+    sku_rows = [
+        {"barcode": bc, "name_th": name_lookup.get(bc, bc), "current_buffer": current_buffer.get(bc, 0)}
+        for bc in barcodes
+    ]
+    new_pos = [
+        {"display_filename": os.path.basename(p.source_filename),
+         "production_date": p.production_date, "po_date": p.po_date}
+        for p in PoImport.objects.filter(id__in=new_po_ids)
+    ]
+    return render(request, "cpall/edit_buffer_form.html", {
+        "plan_run_id": plan_run_id, "plan_name": plan_run.get_short_label(), "sku_rows": sku_rows,
+        "add_po_mode": True, "new_po_ids_str": ",".join(str(i) for i in new_po_ids), "new_pos": new_pos,
+    })
+
+
+def add_po_submit(request, plan_run_id):
+    """
+    ผูก PO ใหม่เข้าแผนเดิม + คำนวณใหม่ทั้งชุด (Add PO feature — 2025-09-12)
+
+    ทำใน transaction เดียวเสมอ แล้วเทียบ snapshot ก่อน/หลัง:
+      - ถ้าไม่มีช่องเดิมเปลี่ยนเลย  -> commit ปกติ จบเลย (กรณีปกติของ workflow รอบเย็น->รอบเช้า)
+      - ถ้ามีช่องเดิมเปลี่ยน/หายไป -> rollback ทั้งหมด แล้วโชว์ว่าเปลี่ยนอะไรบ้าง ให้คนทำเลือกเองว่า
+        จะยืนยันทำต่อไหม (ส่ง force=1 กลับมา) — ตามหลักการที่ตกลงกันไว้ว่า "ไม่แก้ข้อมูลเดิมเงียบๆ"
+    """
+    from django.db import transaction
+
+    from customers.cpall.logic.grouping import check_duplicate_sub_locations
+    from customers.cpall.models import PlanRunImport
+
+    if request.method != "POST":
+        return redirect("cpall:view_plan", plan_run_id=plan_run_id)
+
+    is_htmx = request.headers.get("HX-Request") == "true"
+    plan_run = get_object_or_404(PlanRun, id=plan_run_id)
+
+    def error_response(message, status=400):
+        if is_htmx:
+            response = HttpResponse(status=status)
+            response["HX-Trigger"] = json.dumps({"toast": {"message": message, "level": "error"}})
+            return response
+        return render(request, "cpall/plan_error.html", {"error": message})
+
+    new_po_ids = [int(x) for x in request.POST.get("new_po_ids_str", "").split(",") if x.strip()]
+    if not new_po_ids:
+        return error_response("ไม่พบ PO ที่จะเพิ่ม")
+
+    existing_ids = set(plan_run.po_imports.values_list("id", flat=True))
+    new_po_ids = [i for i in new_po_ids if i not in existing_ids]
+    if not new_po_ids:
+        return error_response("PO ที่เลือกอยู่ในแผนนี้อยู่แล้ว")
+
+    # จุดส่งย่อยซ้ำกันระหว่างรอบ PO = มักเป็นการเผลอเพิ่มไฟล์ซ้ำ/ไฟล์ผิด — บล็อกเหมือน flow สร้างแผน
+    combined_ids = list(existing_ids) + new_po_ids
+    duplicates = check_duplicate_sub_locations(combined_ids)
+    if duplicates:
+        details = "; ".join(
+            f"{d['sub_location']} (PO Import {', '.join(map(str, d['po_import_ids']))})" for d in duplicates
+        )
+        return error_response(f"เพิ่ม PO ไม่ได้ — จุดส่งย่อยซ้ำกันในหลายรอบ PO: {details}", status=409)
+
+    buffer_override = {}
+    for key, val in request.POST.items():
+        if not key.startswith("buffer_"):
+            continue
+        barcode = key[len("buffer_"):]
+        value = val.strip()
+        if value == "":
+            buffer_override[barcode] = 0
+            continue
+        try:
+            buffer_override[barcode] = float(value)
+        except ValueError:
+            pass
+
+    force = request.POST.get("force") == "1"
+    before = _snapshot_plan_results(plan_run_id)
+
+    class _ImpactDetected(Exception):
+        """ใช้บังคับ rollback เท่านั้น ไม่ใช่ error จริง"""
+
+        def __init__(self, impacts):
+            self.impacts = impacts
+
+    try:
+        with transaction.atomic():
+            for po_id in new_po_ids:
+                PlanRunImport.objects.create(plan_run_id=plan_run_id, po_import_id=po_id)
+            edit_buffer_and_regenerate(plan_run_id, buffer_override)
+
+            if not force:
+                impacts = _diff_plan_results(before, _snapshot_plan_results(plan_run_id))
+                if impacts:
+                    raise _ImpactDetected(impacts)
+    except _ImpactDetected as e:
+        # rollback แล้ว — แผนเดิมยังอยู่ครบเหมือนเดิมทุกประการ ให้คนทำตัดสินใจเอง
+        return render(request, "cpall/add_po_impact.html", {
+            "plan_run_id": plan_run_id, "plan_name": plan_run.get_short_label(),
+            "impacts": e.impacts[:100], "impact_total": len(e.impacts),
+            "new_po_ids_str": ",".join(str(i) for i in new_po_ids),
+            "buffer_override": buffer_override,
+        }, status=409)
+    except InactiveSkuOrderedError as e:
+        return error_response(str(e), status=409)
+    except Exception as e:
+        return error_response(f"เพิ่ม PO ไม่สำเร็จ: {type(e).__name__}: {e}", status=500)
+
+    if is_htmx:
+        response = HttpResponse(status=200)
+        response["HX-Trigger"] = json.dumps({
+            "toast": {"message": f"เพิ่ม PO {len(new_po_ids)} รอบ และคำนวณแผนใหม่แล้ว", "level": "success"},
+            "replaceLocation": {"url": reverse("cpall:view_plan", args=[plan_run_id])},
+        })
+        return response
+    return redirect("cpall:view_plan", plan_run_id=plan_run_id)
+
+
+def plan_note_submit(request, plan_run_id):
+    """บันทึกหมายเหตุของแผน (Add PO feature — 2025-09-12)"""
+    if request.method != "POST":
+        return redirect("cpall:view_plan", plan_run_id=plan_run_id)
+    plan_run = get_object_or_404(PlanRun, id=plan_run_id)
+    plan_run.note = request.POST.get("note", "").strip() or None
+    plan_run.save(update_fields=["note"])
+    if request.headers.get("HX-Request") == "true":
+        response = HttpResponse(status=200)
+        response["HX-Trigger"] = json.dumps({"toast": {"message": "บันทึกหมายเหตุแล้ว", "level": "success"}})
         return response
     return redirect("cpall:view_plan", plan_run_id=plan_run_id)
 

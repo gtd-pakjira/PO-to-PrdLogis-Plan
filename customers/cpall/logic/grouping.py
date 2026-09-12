@@ -8,9 +8,10 @@ grouping.py — Module 2: Grouping + Reconciliation
     python -m src.grouping <po_import_id>
 """
 import sys
+from datetime import timedelta
 
 from customers.cpall.logic.db import get_connection
-from datetime import timedelta
+
 
 class ReconciliationError(Exception):
     pass
@@ -178,7 +179,6 @@ def get_dates_for_po_import(po_import_id: int):
     finally:
         conn.close()
 
-from datetime import timedelta
 
 MORNING_GROUP_NAME = "รอบเช้าต่างจังหวัด"
 

@@ -20,12 +20,12 @@ from datetime import datetime
 from customers.cpall.logic.db import get_cpall_customer_id
 from customers.cpall.logic.excel_export import ExcelExportError, export_production_plan
 from customers.cpall.logic.grouping import (
+    DuplicateSubLocationError,
     InactiveSkuOrderedError,
     ReconciliationError,
+    check_duplicate_sub_locations,
     check_inactive_skus_ordered,
     reconcile,
-    DuplicateSubLocationError,
-    check_duplicate_sub_locations,
 )
 from customers.cpall.logic.logistic_plan_export import (
     LogisticPlanError,
@@ -33,8 +33,7 @@ from customers.cpall.logic.logistic_plan_export import (
     get_group_templates,
     group_has_data,
 )
-from customers.cpall.models import PlanRun, PlanRunLogisticFile
-from customers.cpall.models import LogisticGroup
+from customers.cpall.models import LogisticGroup, PlanRun, PlanRunLogisticFile
 
 
 def run_plan(po_import_ids: list[int], output_dir: str | None = None, buffer_override: dict = None) -> dict:
@@ -280,6 +279,7 @@ def get_plan_run_detail(plan_run_id: int) -> dict | None:
         "production_plan_path": plan_run.production_plan_path,
         "production_plan_status": plan_run.production_plan_status,
         "production_plan_error": plan_run.production_plan_error,
+        "note": plan_run.note,
     }
     result["po_imports"] = [
         {"id": pi.id, "source_filename": pi.source_filename,

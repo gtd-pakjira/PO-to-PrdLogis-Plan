@@ -124,7 +124,8 @@ CREATE TABLE IF NOT EXISTS plan_run (
     output_dir              TEXT NOT NULL,
     production_plan_path    TEXT,
     production_plan_status  VARCHAR(20) DEFAULT 'success',
-    production_plan_error   TEXT
+    production_plan_error   TEXT,
+    note                    TEXT           -- หมายเหตุที่ Admin จดกำกับแผนไว้เอง (เช่น "รอบเช้าเพิ่มทีหลัง")
 );
 
 CREATE TABLE IF NOT EXISTS plan_run_import (
@@ -269,6 +270,12 @@ ALTER TABLE template_version ADD COLUMN IF NOT EXISTS original_filename TEXT;
 -- (การ "บันทึกจริง" ว่าใช้เวอร์ชันไหนทำใน sub-phase 3 ตอนเปลี่ยน flow สร้างแผน — คอลัมน์นี้แค่เตรียมที่ไว้)
 ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS production_template_version_id INTEGER
     REFERENCES template_version(id);
+
+-- หมายเหตุของแผน (Add PO feature — 2025-09-12) — ให้ Admin จดกำกับแผนไว้เองได้ เช่น "รอบเช้าเพิ่ม
+-- ทีหลัง" / "แก้ยอดตามที่ฝ่ายผลิตแจ้ง" — CREATE TABLE ด้านบนมีคอลัมน์นี้แล้วก็จริง แต่บรรทัดนั้นทำงาน
+-- เฉพาะตอน fresh install เท่านั้น (IF NOT EXISTS guard) database ที่มีอยู่แล้วต้องอาศัย ALTER ตรงนี้
+-- เสมอ — บทเรียนจากบั๊ก updated_at ที่เคยขาด ALTER แล้วทำให้ Django Admin พังทั้งหน้า (2025-09-10)
+ALTER TABLE plan_run ADD COLUMN IF NOT EXISTS note TEXT;
 
 -- ---------- Template Group (Feature 1 — 2025-09-10) ----------
 -- จัดกลุ่ม TemplateVersion (Production 1 ตัว + Logistic หลายตัว) ให้เป็น "ชุด" เดียวกัน กัน Admin

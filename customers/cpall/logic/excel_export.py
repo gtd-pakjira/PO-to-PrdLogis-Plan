@@ -14,12 +14,11 @@ excel_export.py — Module 4: Excel Exporter (Production Plan)
 """
 import re
 import sys
-from unittest import case
 
 import openpyxl
 
-from customers.cpall.logic.date_utils import find_merged_date_header_column, update_date_headers
-from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location,get_plan_date_context
+from customers.cpall.logic.date_utils import update_date_headers
+from customers.cpall.logic.grouping import get_grouped_quantities_by_sub_location, get_plan_date_context
 from customers.cpall.logic.logistic_plan_export import SUB_LOCATION_LABEL_CORRECTIONS
 
 TEMPLATE_PATH = "customers/cpall/excel_templates/production_plan_template.xlsx"
@@ -365,7 +364,6 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
     """
     from customers.cpall.logic.grouping import (
         get_covered_sub_locations,
-        get_plan_date_context,
     )
 
     sub_location_qty = get_grouped_quantities_by_sub_location(po_import_ids)
@@ -485,7 +483,7 @@ def export_production_plan(po_import_ids, output_path: str, buffer_override: dic
         msg_lines = [f"พบ {len(missing_in_template)} สินค้า ที่มีออเดอร์จริงใน PO แต่หาแถวใน Template ไม่เจอ:"]
         for b in missing_in_template:
             msg_lines.append(f"    - {b}")
-        msg_lines.append(f"  -> ไปเพิ่มแถว สินค้า นี้ในไฟล์เทมเพลตก่อน (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วทำแผนใหม่อีกครั้ง")
+        msg_lines.append("  -> ไปเพิ่มแถว สินค้า นี้ในไฟล์เทมเพลตก่อน (คัดลอกรูปแบบแถวอื่นที่มีอยู่) แล้วทำแผนใหม่อีกครั้ง")
         raise ExcelExportError("\n".join(msg_lines))
 
     # สินค้าที่ปิดใช้งาน (is_active=False) และไม่มี PO สั่งเลยในรอบนี้ แต่ยังมีแถวอยู่ในเทมเพลต —

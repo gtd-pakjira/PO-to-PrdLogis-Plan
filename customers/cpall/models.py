@@ -261,6 +261,7 @@ class PlanRun(models.Model):
     production_plan_path = models.TextField(blank=True, null=True)
     production_plan_status = models.CharField(max_length=20, default="success")
     production_plan_error = models.TextField(blank=True, null=True)
+    note = models.TextField(blank=True, null=True, verbose_name="หมายเหตุ")
     po_imports = models.ManyToManyField(PoImport, through="PlanRunImport", related_name="plan_runs")
     production_template_version = models.ForeignKey(
         TemplateVersion, on_delete=models.SET_NULL, db_column="production_template_version_id",
